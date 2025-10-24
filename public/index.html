@@ -3,34 +3,268 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Creative Chat</title>
+  <title>Maddy Chat'z</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-  <style> body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; } </style>
+  <style>
+    :root {
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      font-size: 16px;
+    }
+    body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    /* Touch-friendly targets */
+    button, [role="button"], .touch-target { min-height: 48px; min-width: 48px; }
+     /* Fluid container width */
+     #appShell { width: 100%; max-width: min(92vw, 80rem); }
+     /* Bottom nav safe-area support */
+     #bottomNav { padding-bottom: env(safe-area-inset-bottom); }
+     /* Input box sizing, readability and overflow removal */
+      #input { font-size: 1rem; resize: none; overflow-y: hidden; min-height: 3rem; max-height: 40vh; }
+      @media (max-width: 320px) {
+        :root { font-size: 15px; }
+        #input { font-size: 0.95rem; }
+      }
+      @media (min-width: 768px) {
+        :root { font-size: 16px; }
+        #input { font-size: 1rem; }
+      }
+      @media (min-width: 1024px) {
+        :root { font-size: 17px; }
+        #input { font-size: 1.0625rem; }
+      }
+      /* Visual feedback states */
+      button:hover { filter: brightness(0.98); }
+      button:active { transform: scale(0.98); }
+      button:focus-visible, .touch-target:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+      /* Chat bubble strong wrapping */
+      .break-words { overflow-wrap: anywhere; word-break: break-word; }
+      /* Friends drawer transition */
+      #mobileFriends.drawer { transform: translateX(-100%); opacity: 0; transition: transform 200ms ease, opacity 200ms ease; will-change: transform; }
+      #mobileFriends.drawer.drawer-open { transform: translateX(0); opacity: 1; }
+      /* Reduced motion opt-in */
+      html.reduced-motion * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+      /* Larger font accessibility option */
+      html.font-large { font-size: 18px; }
+      /* Pre/Code styling inside messages */
+      #messages pre, #messages code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      #messages pre { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 0.75rem; overflow: auto; }
+      #messages code { background: #f1f5f9; border-radius: 0.25rem; padding: 0.1rem 0.25rem; }
+
+      /* Comprehensive accessible theme (WCAG AA) */
+      :root {
+        color-scheme: light dark;
+        --color-bg: #f8fafc; /* body background */
+        --color-surface: #ffffff; /* containers/panels */
+        --color-elevated: #f9fafb; /* subtle elevations */
+        --color-text: #0f172a; /* primary text */
+        --color-text-secondary: #334155; /* secondary text */
+        --color-border: #cbd5e1; /* borders */
+        --color-accent: #0ea5e9; /* interactive/focus */
+        --color-accent-contrast: #ffffff; /* text on accent */
+        --color-muted: #64748b; /* placeholders/muted */
+        --color-success: #10b981; /* status, e.g., online dot */
+      }
+      html.dark {
+        --color-bg: #0B1220;
+        --color-surface: #0F172A;
+        --color-elevated: #111827;
+        --color-text: #E6EEF8;
+        --color-text-secondary: #C8D3E7;
+        --color-border: #1F2937;
+        --color-accent: #38BDF8;
+        --color-accent-contrast: #0B1220;
+        --color-muted: #94A3B8;
+        --color-success: #22c55e;
+      }
+
+      /* Global application surfaces */
+      body { background-color: var(--color-bg); color: var(--color-text); transition: background-color 200ms ease, color 200ms ease; }
+      #appShell, header, #mobileNav, main, footer { background-color: var(--color-surface); color: var(--color-text); border-color: var(--color-border); transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease; }
+      #systemLog, #messages, #mobileFriends, #actionsMenu { background-color: var(--color-surface); color: var(--color-text); border-color: var(--color-border); }
+
+      /* Navigation elements */
+      #bottomNav { background-color: var(--color-surface) !important; border-color: var(--color-border) !important; color: var(--color-text) !important; transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease; }
+
+      /* Form controls */
+      input, textarea, select { background-color: var(--color-surface); color: var(--color-text); border-color: var(--color-border); transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease; }
+      input::placeholder, textarea::placeholder { color: var(--color-muted); }
+      input:focus-visible, textarea:focus-visible, select:focus-visible { outline-color: var(--color-accent); }
+      input[disabled], textarea[disabled], select[disabled] { opacity: 0.7; }
+      /* Ensure input text is visible even if Tailwind sets text-slate-900 */
+      #input { color: var(--color-text) !important; caret-color: var(--color-accent); }
+
+      /* Utility overrides to harmonize Tailwind classes in dark mode */
+      html.dark .bg-white, html.dark .bg-gray-50, html.dark .bg-slate-50, html.dark .bg-gray-100, html.dark .bg-slate-100 { background-color: var(--color-surface) !important; }
+      html.dark .text-slate-600, html.dark .text-gray-600 { color: var(--color-text-secondary) !important; }
+      html.dark .text-slate-700, html.dark .text-gray-700 { color: var(--color-text-secondary) !important; }
+      html.dark .text-slate-800, html.dark .text-gray-800 { color: var(--color-text) !important; }
+      html.dark .text-slate-900, html.dark .text-gray-900 { color: var(--color-text) !important; }
+      html.dark .border-gray-200, html.dark .border-gray-300 { border-color: var(--color-border) !important; }
+      html.dark .placeholder-slate-400::placeholder { color: var(--color-muted) !important; }
+
+      /* Buttons and interactive elements */
+      button { transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, filter 160ms ease; }
+      .btn-primary, button.bg-slate-800 { background-color: var(--color-accent) !important; color: var(--color-accent-contrast) !important; }
+      .btn-secondary, button.border-gray-300 { border-color: var(--color-border) !important; }
+      button:hover { filter: brightness(0.98); }
+      button:focus-visible, .touch-target:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+      /* Images and media dark variants */
+      img[data-dark-src], video[data-dark-src] { transition: opacity 200ms ease; }
+
+      /* Utility overrides to harmonize Tailwind classes in dark mode */
+      html.dark .bg-white, html.dark .bg-gray-50, html.dark .bg-slate-50, html.dark .bg-gray-100, html.dark .bg-slate-100 { background-color: var(--color-surface) !important; }
+      html.dark .text-slate-600, html.dark .text-gray-600 { color: var(--color-text-secondary) !important; }
+      html.dark .text-slate-700, html.dark .text-gray-700 { color: var(--color-text-secondary) !important; }
+      html.dark .text-slate-800, html.dark .text-gray-800 { color: var(--color-text) !important; }
+      html.dark .border-gray-200, html.dark .border-gray-300 { border-color: var(--color-border) !important; }
+      html.dark .placeholder-slate-400::placeholder { color: var(--color-muted) !important; }
+
+      /* Message bubbles */
+      #messages .bubble { background-color: var(--color-elevated); color: var(--color-text); }
+      html.dark #messages .bg-gray-200 { background-color: #1f2937 !important; color: #e5e7eb !important; }
+      html.dark #messages .bg-blue-500 { background-color: #1e40af !important; }
+
+      /* Smooth theme transitions without motion sickness */
+      html.reduced-motion * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+
+      /* High-contrast links */
+      a { color: var(--color-accent); }
+      a:hover { filter: brightness(1.05); }
+
+      /* Online status dot color alignment */
+      .online-dot { background-color: var(--color-success); }
+  </style>
+
 </head>
-<body class="bg-gray-50 min-h-screen flex items-center justify-center p-6">
-  <div class="w-full max-w-2xl bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-    <!-- Brand header with logo -->
-    <header class="px-5 py-4 bg-white border-b border-gray-200 text-slate-800 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6 text-slate-800"><path d="M3 6a3 3 0 013-3h12a3 3 0 013 3v8a3 3 0 01-3 3H9.5l-3.2 2.4a1 1 0 01-1.6-.8V17H6a3 3 0 01-3-3V6z"/></svg>
-        <h1 class="text-lg font-semibold">Creative Chat</h1>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center p-8">
+  <!-- Auth Gate (visible when logged out) -->
+  <section id="authGate" class="w-full max-w-xl mx-auto text-center space-y-6">
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-8">
+      <div class="flex items-center justify-center gap-2 mb-2 text-slate-800">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-7 h-7 text-slate-800"><path d="M3 6a3 3 0 013-3h12a3 3 0 013 3v8a3 3 0 01-3 3H9.5l-3.2 2.4a1 1 0 01-1.6-.8V17H6a3 3 0 01-3-3V6z"/></svg>
+        <h1 class="text-xl font-semibold">Maddy Chat'z</h1>
       </div>
-      <div class="flex items-center gap-3">
-        <span id="nameDisplay" class="text-sm text-slate-600">You: Anonymous</span>
-        <button id="editNameBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Edit</button>
-        <div id="nameEditWrap" class="hidden items-center gap-2">
-          <input id="nameInput" type="text" placeholder="Your name" class="px-3 py-1 border border-gray-300 rounded bg-white text-slate-900" />
-          <button id="setNameBtn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Save</button>
+      <p class="text-slate-600">Sign up or log in to start chatting. It’s fast and free.</p>
+      <div class="pt-4 flex items-center justify-center gap-3 flex-wrap">
+        <button id="signupOpen" class="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Sign Up</button>
+        <button id="loginOpen" class="px-4 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Log In</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- App Shell (hidden until authenticated) -->
+  <div id="appShell" class="w-full max-w-6xl bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hidden">
+    <!-- Brand header with logo -->
+    <header class="px-6 py-5 bg-white border-b border-gray-200 text-slate-800">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6 text-slate-800"><path d="M3 6a3 3 0 013-3h12a3 3 0 013 3v8a3 3 0 01-3 3H9.5l-3.2 2.4a1 1 0 01-1.6-.8V17H6a3 3 0 01-3-3V6z"/></svg>
+          <h1 class="text-lg font-semibold">Maddy Chat'z</h1>
         </div>
+        <button id="navToggle" class="md:hidden px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700" aria-label="Toggle navigation">☰</button>
       </div>
     </header>
 
-    <!-- Auth panel -->
-    <div id="authPanel" class="px-5 py-4 border-b border-gray-200 bg-slate-50">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+    <!-- Collapsible nav/control bar (hamburger on mobile, visible on md+) -->
+    <div id="mobileNav" class="hidden md:flex px-6 py-3 border-b border-gray-200 bg-white items-center gap-3 flex-wrap">
+      <span id="nameDisplay" class="text-sm text-slate-600">You: Anonymous</span>
+      <button id="editNameBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Edit</button>
+      <div id="nameEditWrap" class="hidden items-center gap-2">
+        <input id="nameInput" type="text" placeholder="Your name" class="px-3 py-1 border border-gray-300 rounded bg-white text-slate-900" />
+        <button id="setNameBtn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Save</button>
+      </div>
+      <button id="logoutBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm hidden">Logout</button>
+    </div>
+
+    <!-- Main content area with sidebar -->
+     <div class="grid grid-cols-1 md:grid-cols-[20rem,1fr] min-h-[60vh]">
+      <!-- Friends Sidebar -->
+       <div class="hidden md:flex md:w-80 bg-gray-50 border-r border-gray-200 flex-col">
+         <div class="px-4 py-3 border-b border-gray-200 bg-white">
+           <h2 class="text-sm font-semibold text-slate-700">Friends Online</h2>
+         </div>
+         <div id="friendsList" class="flex-1 overflow-y-auto">
+           <!-- Friends will be populated here -->
+         </div>
+       </div>
+
+      <!-- Chat Area -->
+      <div class="flex-1 flex flex-col">
+
+    <!-- Info bar -->
+    <div class="px-3 sm:px-6 py-3 flex items-center justify-between border-b border-gray-200 text-slate-600">
+      <div class="flex items-center gap-2 sm:gap-3">
+        <button id="friendsToggle" class="inline-flex md:hidden px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-xs">Friends</button>
+        <span id="roomLabel" class="text-xs sm:text-sm"></span>
+        <span id="onlineLabel" class="text-xs sm:text-sm"></span>
+        <span id="inviteLabel" class="text-[10px] sm:text-xs text-slate-400"></span>
+      </div>
+      <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <button id="copyLinkBtn" class="px-2 sm:px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-xs sm:text-sm">Copy Invite Link</button>
+        <div class="relative">
+          <button id="actionsMenuBtn" aria-haspopup="true" aria-expanded="false" class="px-2 sm:px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-xs sm:text-sm" title="More actions">☰</button>
+          <div id="actionsMenu" class="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg hidden origin-top-right transition transform duration-150 z-50">
+            <ul class="py-1" role="menu" aria-label="Overflow actions">
+              <li>
+                <button id="menuNewRoom" class="w-full text-left px-3 py-2 hover:bg-gray-100" role="menuitem" tabindex="0">New Room</button>
+              </li>
+              <li>
+                <button id="menuClearRoom" class="w-full text-left px-3 py-2 hover:bg-gray-100" role="menuitem" tabindex="0">Clear Room</button>
+              </li>
+              <li>
+                <button id="menuSettings" class="w-full text-left px-3 py-2 hover:bg-gray-100" role="menuitem" tabindex="0">Settings</button>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <!-- Keep original buttons for script hooks but hide to avoid overflow -->
+        <button id="newRoomBtn" class="hidden">New Room</button>
+        <button id="clearRoomBtn" class="hidden">Clear Room</button>
+      </div>
+    </div>
+
+    <!-- Mobile Friends Drawer -->
+    <div id="mobileFriends" class="md:hidden hidden border-b border-gray-200 drawer">
+      <div class="px-4 py-3 bg-white">
+        <h2 class="text-sm font-semibold text-slate-700">Friends Online</h2>
+      </div>
+      <div id="friendsListMobile" class="max-h-64 overflow-y-auto bg-gray-50"></div>
+    </div>
+
+    <!-- Main chat -->
+    <main class="p-6 space-y-3">
+      <!-- System messages appear separately from chat; fades and auto-hide -->
+      <div id="systemLog" class="text-slate-500 text-xs bg-slate-50 border border-gray-200 rounded p-2 space-y-1 hidden opacity-0 transition-opacity duration-500"></div>
+      <ul id="messages" class="flex-1 min-h-[40vh] overflow-y-auto bg-white border border-gray-200 rounded p-4 space-y-3"></ul>
+      <div id="typingLabel" class="text-slate-500 text-sm h-5"></div>
+      <form id="form" class="flex gap-2 sm:gap-3">
+        <button id="attachBtn" type="button" class="bg-slate-100 text-slate-700 border border-gray-300 px-3 py-2 rounded hover:bg-slate-200" title="Add attachments">📎</button>
+        <input id="fileInput" type="file" class="hidden" multiple accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" />
+        <textarea id="input" rows="1" autocomplete="off" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" class="flex-1 border border-gray-300 bg-white text-slate-900 rounded px-3 py-2 placeholder-slate-400"></textarea>
+        <button class="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded hover:bg-slate-700">Send</button>
+      </form>
+    </main>
+
+        <!-- Footer -->
+        <footer class="px-6 py-5 bg-white border-t border-gray-200 text-slate-400 text-sm flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span class="text-center sm:text-left">© 2025 Maddy Chat'z</span>
+          <span class="text-center sm:text-right">Invite friends with "Copy Invite Link"</span>
+        </footer>
+      </div>
+    </div>
+  </div>
+
+  <!-- Signup Modal -->
+  <div id="signupModal" class="fixed inset-0 bg-black/30 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+      <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="text-slate-800 font-semibold">Create Account</h2>
+        <button id="signupClose" class="text-slate-500 hover:text-slate-700">✕</button>
+      </div>
+      <div class="p-5 space-y-3">
         <div class="flex flex-col gap-1">
           <label for="authName" class="text-sm text-slate-600">Name</label>
           <input id="authName" type="text" placeholder="Your name" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
@@ -43,49 +277,88 @@
           <label for="authPassword" class="text-sm text-slate-600">Password</label>
           <input id="authPassword" type="password" placeholder="••••••••" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
         </div>
-      </div>
-      <div class="mt-3 flex items-center gap-2">
-        <button id="signupBtn" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Sign Up</button>
-        <button id="loginBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Log In</button>
-        <span class="text-xs text-slate-500">Sign up or log in to continue chatting. Your messages will be saved.</span>
+        <div class="pt-2 flex items-center justify-end gap-2">
+          <button id="signupBtn" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Sign Up</button>
+        </div>
       </div>
     </div>
-
-    <!-- Info bar -->
-    <div class="px-5 py-2 flex items-center justify-between border-b border-gray-200 text-slate-600">
-      <div class="flex items-center gap-3">
-        <span id="roomLabel" class="text-sm"></span>
-        <span id="onlineLabel" class="text-sm"></span>
-        <span id="inviteLabel" class="text-xs text-slate-400"></span>
-      </div>
-      <div class="flex items-center gap-2">
-        <button id="copyLinkBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Copy Invite Link</button>
-        <button id="newRoomBtn" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">New Room</button>
-        <button id="clearRoomBtn" class="px-3 py-1 rounded border border-red-300 bg-white hover:bg-red-50 text-red-600 text-sm">Clear Room</button>
-        <button id="logoutBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Logout</button>
-      </div>
-    </div>
-
-    <!-- Main chat -->
-    <main class="p-5 space-y-3">
-      <!-- System messages appear separately from chat; fades and auto-hide -->
-      <div id="systemLog" class="text-slate-500 text-xs bg-slate-50 border border-gray-200 rounded p-2 space-y-1 hidden opacity-0 transition-opacity duration-500"></div>
-      <ul id="messages" class="h-96 overflow-y-auto bg-white border border-gray-200 rounded p-4 space-y-3"></ul>
-      <div id="typingLabel" class="text-slate-500 text-sm h-5"></div>
-      <form id="form" class="flex gap-2">
-        <textarea id="input" rows="1" autocomplete="off" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" class="flex-1 border border-gray-300 bg-white text-slate-900 rounded px-3 py-2 placeholder-slate-400"></textarea>
-        <button class="bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-700">Send</button>
-      </form>
-    </main>
-
-    <!-- Footer -->
-    <footer class="px-5 py-4 bg-white border-t border-gray-200 text-slate-400 text-sm flex items-center justify-between">
-      <span>© 2025 Creative Chat</span>
-      <span>Invite friends with "Copy Invite Link"</span>
-    </footer>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="./client.js"></script>
+  <!-- Login Modal -->
+  <div id="loginModal" class="fixed inset-0 bg-black/30 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+      <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="text-slate-800 font-semibold">Log In</h2>
+        <button id="loginClose" class="text-slate-500 hover:text-slate-700">✕</button>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="flex flex-col gap-1">
+          <label for="loginEmail" class="text-sm text-slate-600">Email</label>
+          <input id="loginEmail" type="email" placeholder="you@example.com" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="loginPassword" class="text-sm text-slate-600">Password</label>
+          <input id="loginPassword" type="password" placeholder="••••••••" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
+        </div>
+        <div class="pt-2 flex items-center justify-end gap-2">
+          <button id="loginBtn" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Log In</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Navigation (mobile only) -->
+  <nav id="bottomNav" class="fixed bottom-0 left-0 right-0 md:hidden bg-white/95 backdrop-blur border-t border-gray-200 z-40">
+    <div class="max-w-6xl mx-auto px-4 py-2 flex items-center justify-around">
+      <button id="tabChat" class="touch-target flex flex-col items-center gap-1 text-slate-700" aria-label="Chat">
+        <span>💬</span>
+        <span class="text-xs">Chat</span>
+      </button>
+      <button id="tabFriends" class="touch-target flex flex-col items-center gap-1 text-slate-700" aria-label="Friends">
+        <span>👥</span>
+        <span class="text-xs">Friends</span>
+      </button>
+      <button id="tabMore" class="touch-target flex flex-col items-center gap-1 text-slate-700" aria-label="More">
+        <span>☰</span>
+        <span class="text-xs">More</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="fixed inset-0 bg-black/30 flex items-center justify-center hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+      <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 id="settingsTitle" class="text-base sm:text-lg font-semibold text-slate-800">Settings</h2>
+        <button id="settingsClose" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm" aria-label="Close settings">Close</button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">Theme</h3>
+          <div class="flex gap-2 flex-wrap">
+            <button id="themeLight" class="px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Light</button>
+            <button id="themeDark" class="px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Dark</button>
+            <button id="themeSystem" class="px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">System</button>
+          </div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">Accessibility</h3>
+          <label class="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" id="reduceMotionToggle" class="rounded" /> Reduce motion
+          </label>
+          <label class="flex items-center gap-2 text-sm text-slate-700 mt-2">
+            <input type="checkbox" id="largeFontToggle" class="rounded" /> Larger font size
+          </label>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">Code display</h3>
+          <p class="text-xs text-slate-600">Pre/code blocks render with monospaced fonts and subtle backgrounds.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js" defer></script>
+  <script src="./client.js" defer></script>
 </body>
 </html>

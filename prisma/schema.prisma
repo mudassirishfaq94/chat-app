@@ -52,8 +52,15 @@ model Message {
   createdAt DateTime  @default(now())
   deletedAt DateTime? // soft delete
 
+  // Optional attachment fields
+  attachmentUrl  String?
+  attachmentType String? // 'image' | 'video' | 'file'
+  attachmentName String?
+  attachmentSize Int?
+  attachmentMime String?
+
   room Room @relation(fields: [roomId], references: [id])
   user User @relation(fields: [userId], references: [id])
 
   @@index([roomId, createdAt])
-}
+}
