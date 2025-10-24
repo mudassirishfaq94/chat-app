@@ -11,6 +11,9 @@ const roomLabel = document.getElementById('roomLabel');
 const onlineLabel = document.getElementById('onlineLabel');
 const inviteLabel = document.getElementById('inviteLabel');
 const typingLabel = document.getElementById('typingLabel');
+const nameDisplayEl = document.getElementById('nameDisplay');
+const editNameBtn = document.getElementById('editNameBtn');
+const nameEditWrap = document.getElementById('nameEditWrap');
 
 function getParams() {
   return new URLSearchParams(window.location.search);
@@ -34,10 +37,9 @@ function randomRoomId() {
   return Math.random().toString(36).slice(2, 8);
 }
 
-// Persist name in localStorage
-const savedName = localStorage.getItem('chatName');
-if (savedName) {
-  nameInputEl.value = savedName;
+function updateNameDisplay() {
+  const name = (nameInputEl.value || '').trim();
+  nameDisplayEl.textContent = `You: ${name || 'Anonymous'}`;
 }
 
 let currentRoom = getRoomFromUrl();
@@ -56,7 +58,7 @@ function addMessage({ from = 'system', text = '', ts = Date.now(), system = fals
   const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   li.className = `flex ${self ? 'justify-end' : 'justify-start'}`;
   const bubble = document.createElement('div');
-  bubble.className = `max-w-[75%] px-3 py-2 rounded-xl text-sm shadow ${system ? 'bg-white/10 text-white/80 italic' : self ? 'bg-indigo-600 text-white' : 'bg-white text-slate-900'}`;
+  bubble.className = `max-w-[75%] px-3 py-2 rounded-xl text-sm shadow-sm ${system ? 'bg-slate-50 text-slate-500 italic' : self ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-900'}`;
   bubble.innerText = system ? `[${time}] ${text}` : `${from} • ${time}\n${text}`;
   li.appendChild(bubble);
 
@@ -82,7 +84,7 @@ socket.on('system', (text) => {
 
 socket.on('online', (list) => {
   const count = Array.isArray(list) ? list.length : 0;
-  onlineLabel.textContent = `Online: ${count}${count ? ' (' + list.join(', ') + ')' : ''}`;
+  onlineLabel.textContent = `Online: ${count}`;
 });
 
 // Typing indicators
@@ -143,11 +145,18 @@ function triggerTyping() {
   typingTimeout = setTimeout(() => socket.emit('typing', false), 1200);
 }
 
+editNameBtn.addEventListener('click', () => {
+  nameEditWrap.classList.remove('hidden');
+  nameInputEl.focus();
+});
+
 setNameBtn.addEventListener('click', () => {
   const name = nameInputEl.value.trim();
   if (!name) return;
   socket.emit('set-name', name);
   localStorage.setItem('chatName', name);
+  updateNameDisplay();
+  nameEditWrap.classList.add('hidden');
   addMessage({ text: `You are now known as ${name}`, system: true });
 });
 
@@ -173,3 +182,10 @@ newRoomBtn.addEventListener('click', () => {
   socket.emit('join-room', { roomId: currentRoom, name: nameInputEl.value.trim() || undefined });
   addMessage({ text: `Created new room: ${currentRoom}. Share the link to invite others!`, system: true });
 });
+
+nameInputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    setNameBtn.click();
+  }
+});
