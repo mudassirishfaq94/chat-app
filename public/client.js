@@ -14,6 +14,7 @@ const typingLabel = document.getElementById('typingLabel');
 const nameDisplayEl = document.getElementById('nameDisplay');
 const editNameBtn = document.getElementById('editNameBtn');
 const nameEditWrap = document.getElementById('nameEditWrap');
+const systemLogEl = document.getElementById('systemLog');
 
 function getParams() {
   return new URLSearchParams(window.location.search);
@@ -71,15 +72,26 @@ function updateRoomLabels() {
   roomLabel.textContent = `Room: ${currentRoom}`;
 }
 
+function addSystem(text) {
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const div = document.createElement('div');
+  div.textContent = `[${time}] ${text}`;
+  systemLogEl.appendChild(div);
+  // Keep system log concise (last 8 entries)
+  while (systemLogEl.childElementCount > 8) {
+    systemLogEl.removeChild(systemLogEl.firstElementChild);
+  }
+}
+
 socket.on('connect', () => {
   updateRoomLabels();
   socket.emit('join-room', { roomId: currentRoom, name: nameInputEl.value.trim() || undefined });
-  addMessage({ text: 'Connected to server', system: true });
-  if (invitedBy) addMessage({ text: `You were invited by ${invitedBy}`, system: true });
+  addSystem('Connected to server');
+  if (invitedBy) addSystem(`You were invited by ${invitedBy}`);
 });
 
 socket.on('system', (text) => {
-  addMessage({ text, system: true });
+  addSystem(text);
 });
 
 socket.on('online', (list) => {
@@ -157,7 +169,7 @@ setNameBtn.addEventListener('click', () => {
   localStorage.setItem('chatName', name);
   updateNameDisplay();
   nameEditWrap.classList.add('hidden');
-  addMessage({ text: `You are now known as ${name}`, system: true });
+  addSystem(`You are now known as ${name}`);
 });
 
 copyLinkBtn.addEventListener('click', async () => {
@@ -180,7 +192,7 @@ newRoomBtn.addEventListener('click', () => {
   currentRoom = newRoom;
   updateRoomLabels();
   socket.emit('join-room', { roomId: currentRoom, name: nameInputEl.value.trim() || undefined });
-  addMessage({ text: `Created new room: ${currentRoom}. Share the link to invite others!`, system: true });
+  addSystem(`Created new room: ${currentRoom}. Share the link to invite others!`);
 });
 
 nameInputEl.addEventListener('keydown', (e) => {
