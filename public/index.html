@@ -27,6 +27,7 @@
       <div class="flex items-center gap-3">
         <span id="roomLabel" class="text-sm"></span>
         <span id="onlineLabel" class="text-sm"></span>
+        <span id="inviteLabel" class="text-sm"></span>
       </div>
       <div class="flex items-center gap-2">
         <button id="copyLinkBtn" class="px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-sm">Copy Invite Link</button>
@@ -36,8 +37,9 @@
 
     <main class="p-5 space-y-3">
       <ul id="messages" class="h-96 overflow-y-auto bg-white/5 border border-white/10 rounded p-4 space-y-3"></ul>
+      <div id="typingLabel" class="text-white/70 text-sm h-5"></div>
       <form id="form" class="flex gap-2">
-        <input id="input" autocomplete="off" placeholder="Type a message..." class="flex-1 border border-white/20 bg-white/10 text-white rounded px-3 py-2 placeholder-white/60" />
+        <textarea id="input" rows="1" autocomplete="off" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" class="flex-1 border border-white/20 bg-white/10 text-white rounded px-3 py-2 placeholder-white/60"></textarea>
         <button class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-500">Send</button>
       </form>
     </main>

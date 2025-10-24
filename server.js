@@ -83,6 +83,13 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Typing indicator
+  socket.on('typing', (isTyping) => {
+    const roomId = socket.data.roomId;
+    if (!roomId) return;
+    socket.broadcast.to(roomId).emit('typing', { from: socket.data.name, isTyping: !!isTyping });
+  });
+
   socket.on('disconnect', () => {
     const roomId = socket.data.roomId;
     if (!roomId) return;
