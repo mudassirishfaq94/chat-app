@@ -15,6 +15,9 @@ const nameDisplayEl = document.getElementById('nameDisplay');
 const editNameBtn = document.getElementById('editNameBtn');
 const nameEditWrap = document.getElementById('nameEditWrap');
 const systemLogEl = document.getElementById('systemLog');
+let systemLogHideTimer;
+const SYSTEM_SHOW_MS = 6000; // show for ~6s (adjustable to 5-10s)
+const SYSTEM_FADE_MS = 500;  // fade duration
 
 function getParams() {
   return new URLSearchParams(window.location.search);
@@ -72,6 +75,23 @@ function updateRoomLabels() {
   roomLabel.textContent = `Room: ${currentRoom}`;
 }
 
+function showSystemLog() {
+  // cancel any pending hide
+  clearTimeout(systemLogHideTimer);
+  // make visible and fade in
+  systemLogEl.classList.remove('hidden');
+  systemLogEl.classList.remove('opacity-0');
+  systemLogEl.classList.add('opacity-100');
+  // schedule hide after delay
+  systemLogHideTimer = setTimeout(() => {
+    systemLogEl.classList.remove('opacity-100');
+    systemLogEl.classList.add('opacity-0');
+    setTimeout(() => {
+      systemLogEl.classList.add('hidden');
+    }, SYSTEM_FADE_MS);
+  }, SYSTEM_SHOW_MS);
+}
+
 function addSystem(text) {
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const div = document.createElement('div');
@@ -81,6 +101,8 @@ function addSystem(text) {
   while (systemLogEl.childElementCount > 8) {
     systemLogEl.removeChild(systemLogEl.firstElementChild);
   }
+  // show with fade and auto-hide
+  showSystemLog();
 }
 
 socket.on('connect', () => {

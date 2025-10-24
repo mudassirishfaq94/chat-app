@@ -43,8 +43,8 @@
 
     <!-- Main chat -->
     <main class="p-5 space-y-3">
-      <!-- System messages appear separately from chat -->
-      <div id="systemLog" class="text-slate-500 text-xs bg-slate-50 border border-gray-200 rounded p-2 space-y-1"></div>
+      <!-- System messages appear separately from chat; fades and auto-hide -->
+      <div id="systemLog" class="text-slate-500 text-xs bg-slate-50 border border-gray-200 rounded p-2 space-y-1 hidden opacity-0 transition-opacity duration-500"></div>
       <ul id="messages" class="h-96 overflow-y-auto bg-white border border-gray-200 rounded p-4 space-y-3"></ul>
       <div id="typingLabel" class="text-slate-500 text-sm h-5"></div>
       <form id="form" class="flex gap-2">
