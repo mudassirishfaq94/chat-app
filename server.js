@@ -2,6 +2,9 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
+const { PrismaClient } = require('@prisma/client');
+
+const prisma = new PrismaClient();
 
 const app = express();
 const server = http.createServer(app);
@@ -24,7 +27,7 @@ io.on('connection', (socket) => {
   }
 
   // Client will call join-room with roomId and optional name
-  socket.on('join-room', ({ roomId, name }) => {
+  socket.on('join-room', async ({ roomId, name }) => {
     if (!roomId) return;
 
     if (name && typeof name === 'string' && name.trim()) {
@@ -53,10 +56,26 @@ io.on('connection', (socket) => {
     socket.emit('system', `You joined room ${roomId} as ${socket.data.name}`);
     socket.broadcast.to(roomId).emit('system', `${socket.data.name} joined the room`);
     io.to(roomId).emit('online', Array.from(roomUsers.values()));
+
+    // Send recent chat history (last 100 messages) for this room
+    try {
+      const history = await prisma.message.findMany({
+        where: { roomId },
+        orderBy: { createdAt: 'asc' },
+        take: 100,
+      });
+      socket.emit('history', history.map((m) => ({
+        from: m.from,
+        text: m.text,
+        ts: new Date(m.createdAt).getTime(),
+      })));
+    } catch (err) {
+      console.error('Error loading history:', err);
+    }
   });
 
-  // Broadcast message to current room
-  socket.on('message', (text) => {
+  // Broadcast message to current room and persist
+  socket.on('message', async (text) => {
     const roomId = socket.data.roomId;
     if (!roomId) return; // not in a room
     const msg = {
@@ -64,6 +83,21 @@ io.on('connection', (socket) => {
       text: String(text || ''),
       ts: Date.now(),
     };
+
+    // Persist the message
+    try {
+      await prisma.message.create({
+        data: {
+          roomId,
+          from: msg.from,
+          text: msg.text,
+          // createdAt will default to now()
+        },
+      });
+    } catch (err) {
+      console.error('Error saving message:', err);
+    }
+
     io.to(roomId).emit('message', msg);
   });
 
@@ -110,3 +144,4 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
+

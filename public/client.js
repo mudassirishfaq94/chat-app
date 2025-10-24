@@ -146,6 +146,15 @@ socket.on('message', (msg) => {
   addMessage({ ...msg, self });
 });
 
+// Render chat history when joining a room
+socket.on('history', (msgs) => {
+  if (!Array.isArray(msgs)) return;
+  msgs.forEach((msg) => {
+    const self = msg.from === (nameInputEl.value.trim() || '');
+    addMessage({ ...msg, self });
+  });
+});
+
 // Send message
 formEl.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -222,4 +231,4 @@ nameInputEl.addEventListener('keydown', (e) => {
     e.preventDefault();
     setNameBtn.click();
   }
-});
+});
