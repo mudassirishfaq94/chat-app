@@ -28,6 +28,29 @@
       </div>
     </header>
 
+    <!-- Auth panel -->
+    <div id="authPanel" class="px-5 py-4 border-b border-gray-200 bg-slate-50">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div class="flex flex-col gap-1">
+          <label for="authName" class="text-sm text-slate-600">Name</label>
+          <input id="authName" type="text" placeholder="Your name" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="authEmail" class="text-sm text-slate-600">Email</label>
+          <input id="authEmail" type="email" placeholder="you@example.com" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="authPassword" class="text-sm text-slate-600">Password</label>
+          <input id="authPassword" type="password" placeholder="••••••••" class="px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
+        </div>
+      </div>
+      <div class="mt-3 flex items-center gap-2">
+        <button id="signupBtn" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Sign Up</button>
+        <button id="loginBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Log In</button>
+        <span class="text-xs text-slate-500">Sign up or log in to continue chatting. Your messages will be saved.</span>
+      </div>
+    </div>
+
     <!-- Info bar -->
     <div class="px-5 py-2 flex items-center justify-between border-b border-gray-200 text-slate-600">
       <div class="flex items-center gap-3">
@@ -38,6 +61,7 @@
       <div class="flex items-center gap-2">
         <button id="copyLinkBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Copy Invite Link</button>
         <button id="newRoomBtn" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">New Room</button>
+        <button id="clearRoomBtn" class="px-3 py-1 rounded border border-red-300 bg-white hover:bg-red-50 text-red-600 text-sm">Clear Room</button>
       </div>
     </div>
 

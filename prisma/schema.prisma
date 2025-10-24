@@ -1,4 +1,4 @@
-// Prisma schema for chat message persistence
+// Prisma schema for authenticated chat with persistence
 
 datasource db {
   provider = "sqlite"
@@ -9,10 +9,51 @@ generator client {
   provider = "prisma-client-js"
 }
 
-model Message {
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime  @default(now())
+
+  rooms        Room[]    @relation("RoomOwner")
+  memberships  Membership[]
+  messages     Message[]
+}
+
+model Room {
+  id        Int          @id @default(autoincrement())
+  code      String       @unique
+  ownerId   Int
+  owner     User         @relation("RoomOwner", fields: [ownerId], references: [id])
+  createdAt DateTime     @default(now())
+
+  memberships Membership[]
+  messages     Message[]
+}
+
+model Membership {
   id        Int      @id @default(autoincrement())
-  roomId    String
-  from      String
-  text      String
+  userId    Int
+  roomId    Int
   createdAt DateTime @default(now())
+
+  user   User @relation(fields: [userId], references: [id])
+  room   Room @relation(fields: [roomId], references: [id])
+
+  @@unique([userId, roomId])
+}
+
+model Message {
+  id        Int       @id @default(autoincrement())
+  roomId    Int
+  userId    Int
+  text      String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime? // soft delete
+
+  room Room @relation(fields: [roomId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([roomId, createdAt])
 }

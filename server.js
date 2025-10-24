@@ -3,6 +3,10 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-prod';
 
 const prisma = new PrismaClient();
 
@@ -12,42 +16,101 @@ const io = new Server(server);
 
 // Serve static files from public
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
 
 app.get('/health', (req, res) => {
   res.json({ ok: true });
 });
 
-// Room state: roomId -> Map(socketId -> name)
+// Auth endpoints
+app.post('/api/signup', async (req, res) => {
+  try {
+    const { name, email, password } = req.body || {};
+    if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return res.status(400).json({ error: 'Email already in use' });
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({ data: { name, email, passwordHash } });
+    const token = jwt.sign({ uid: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+  } catch (err) {
+    console.error('Signup error', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Missing fields' });
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
+    const token = jwt.sign({ uid: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+  } catch (err) {
+    console.error('Login error', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Socket auth middleware
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth && socket.handshake.auth.token;
+    if (!token) return next(new Error('unauthorized'));
+    const payload = jwt.verify(token, JWT_SECRET);
+    const user = await prisma.user.findUnique({ where: { id: payload.uid } });
+    if (!user) return next(new Error('unauthorized'));
+    socket.data.user = { id: user.id, name: user.name, email: user.email };
+    next();
+  } catch (e) {
+    next(new Error('unauthorized'));
+  }
+});
+
+// Room state: roomCode -> Map(socketId -> name)
 const rooms = new Map();
 
 io.on('connection', (socket) => {
-  // Default guest name
-  if (!socket.data.name) {
-    socket.data.name = `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
-  }
+  // Set default name from authenticated user
+  socket.data.name = socket.data.user?.name || `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  // Client will call join-room with roomId and optional name
-  socket.on('join-room', async ({ roomId, name }) => {
+  // Client will call join-room with room code (string)
+  socket.on('join-room', async ({ roomId }) => {
     if (!roomId) return;
 
-    if (name && typeof name === 'string' && name.trim()) {
-      socket.data.name = name.trim();
-    }
-
     // Leave old room if any
-    if (socket.data.roomId) {
-      const old = socket.data.roomId;
-      socket.leave(old);
-      const oldRoom = rooms.get(old);
-      if (oldRoom) {
-        oldRoom.delete(socket.id);
-        io.to(old).emit('online', Array.from(oldRoom.values()));
+    if (socket.data.roomCode) {
+      const oldCode = socket.data.roomCode;
+      socket.leave(oldCode);
+      const oldRoomMap = rooms.get(oldCode);
+      if (oldRoomMap) {
+        oldRoomMap.delete(socket.id);
+        io.to(oldCode).emit('online', Array.from(oldRoomMap.values()));
       }
     }
 
-    // Join new room
+    // Ensure a Room exists for this code
+    let room = await prisma.room.findUnique({ where: { code: roomId } });
+    if (!room) {
+      // create room owned by current user
+      room = await prisma.room.create({ data: { code: roomId, ownerId: socket.data.user.id } });
+      socket.emit('system', `Created new room ${roomId}`);
+    }
+
+    // Ensure membership exists
+    await prisma.membership.upsert({
+      where: { userId_roomId: { userId: socket.data.user.id, roomId: room.id } },
+      update: {},
+      create: { userId: socket.data.user.id, roomId: room.id },
+    });
+
+    // Join socket.io room by code
     socket.join(roomId);
-    socket.data.roomId = roomId;
+    socket.data.roomCode = roomId;
+    socket.data.roomDbId = room.id;
 
     if (!rooms.has(roomId)) rooms.set(roomId, new Map());
     const roomUsers = rooms.get(roomId);
@@ -60,12 +123,14 @@ io.on('connection', (socket) => {
     // Send recent chat history (last 100 messages) for this room
     try {
       const history = await prisma.message.findMany({
-        where: { roomId },
+        where: { roomId: room.id, deletedAt: null },
         orderBy: { createdAt: 'asc' },
         take: 100,
+        include: { user: true },
       });
       socket.emit('history', history.map((m) => ({
-        from: m.from,
+        id: m.id,
+        from: m.user.name,
         text: m.text,
         ts: new Date(m.createdAt).getTime(),
       })));
@@ -74,46 +139,80 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Broadcast message to current room and persist
+  // Broadcast message to current room and persist with ownership
   socket.on('message', async (text) => {
-    const roomId = socket.data.roomId;
-    if (!roomId) return; // not in a room
-    const msg = {
-      from: socket.data.name,
-      text: String(text || ''),
-      ts: Date.now(),
-    };
+    const roomCode = socket.data.roomCode;
+    const roomDbId = socket.data.roomDbId;
+    if (!roomCode || !roomDbId) return; // not in a room
+    const msgText = String(text || '').trim();
+    if (!msgText) return;
 
-    // Persist the message
     try {
-      await prisma.message.create({
+      const created = await prisma.message.create({
         data: {
-          roomId,
-          from: msg.from,
-          text: msg.text,
-          // createdAt will default to now()
+          roomId: roomDbId,
+          userId: socket.data.user.id,
+          text: msgText,
         },
       });
+      const msg = {
+        id: created.id,
+        from: socket.data.name,
+        text: msgText,
+        ts: new Date(created.createdAt).getTime(),
+      };
+      io.to(roomCode).emit('message', msg);
     } catch (err) {
       console.error('Error saving message:', err);
     }
-
-    io.to(roomId).emit('message', msg);
   });
 
-  // Change nickname within current room
-  socket.on('set-name', (name) => {
-    const roomId = socket.data.roomId;
-    if (!roomId) return;
+  // Change display name (updates user profile)
+  socket.on('set-name', async (name) => {
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) return;
+    const newName = String(name || '').trim();
+    if (!newName) return;
     const old = socket.data.name;
-    if (name && typeof name === 'string' && name.trim()) {
-      socket.data.name = name.trim();
-      const roomUsers = rooms.get(roomId);
+    try {
+      await prisma.user.update({ where: { id: socket.data.user.id }, data: { name: newName } });
+      socket.data.name = newName;
+      const roomUsers = rooms.get(roomCode);
       if (roomUsers) {
         roomUsers.set(socket.id, socket.data.name);
-        io.to(roomId).emit('online', Array.from(roomUsers.values()));
+        io.to(roomCode).emit('online', Array.from(roomUsers.values()));
       }
-      io.to(roomId).emit('system', `${old} is now known as ${socket.data.name}`);
+      io.to(roomCode).emit('system', `${old} is now known as ${socket.data.name}`);
+    } catch (e) {
+      console.error('Error updating name', e);
+    }
+  });
+
+  // Delete your own message
+  socket.on('delete-message', async (messageId) => {
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) return;
+    try {
+      const msg = await prisma.message.findUnique({ where: { id: Number(messageId) } });
+      if (!msg || msg.userId !== socket.data.user.id) return; // only owner can delete
+      await prisma.message.update({ where: { id: msg.id }, data: { deletedAt: new Date() } });
+      io.to(roomCode).emit('message-deleted', msg.id);
+    } catch (e) {
+      console.error('Delete message error', e);
+    }
+  });
+
+  // Clear entire room (owner only)
+  socket.on('clear-room', async () => {
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) return;
+    try {
+      const room = await prisma.room.findUnique({ where: { code: roomCode } });
+      if (!room || room.ownerId !== socket.data.user.id) return; // only owner
+      await prisma.message.deleteMany({ where: { roomId: room.id } });
+      io.to(roomCode).emit('room-cleared');
+    } catch (e) {
+      console.error('Clear room error', e);
     }
   });
 
@@ -125,16 +224,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    const roomId = socket.data.roomId;
-    if (!roomId) return;
-    const roomUsers = rooms.get(roomId);
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) return;
+    const roomUsers = rooms.get(roomCode);
     if (roomUsers) {
       const name = roomUsers.get(socket.id) || socket.data.name;
       roomUsers.delete(socket.id);
-      io.to(roomId).emit('system', `${name} left the room`);
-      io.to(roomId).emit('online', Array.from(roomUsers.values()));
+      io.to(roomCode).emit('system', `${name} left the room`);
+      io.to(roomCode).emit('online', Array.from(roomUsers.values()));
       if (roomUsers.size === 0) {
-        rooms.delete(roomId);
+        rooms.delete(roomCode);
       }
     }
   });
