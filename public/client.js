@@ -14,6 +14,7 @@ const nameDisplayEl = document.getElementById('nameDisplay');
 const editNameBtn = document.getElementById('editNameBtn');
 const nameEditWrap = document.getElementById('nameEditWrap');
 const systemLogEl = document.getElementById('systemLog');
+const logoutBtn = document.getElementById('logoutBtn');
 let systemLogHideTimer;
 const SYSTEM_SHOW_MS = 6000; // show for ~6s (adjustable to 5-10s)
 const SYSTEM_FADE_MS = 500;  // fade duration
@@ -355,5 +356,20 @@ nameInputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     setNameBtn.click();
+  }
+});
+
+logoutBtn?.addEventListener('click', () => {
+  try {
+    localStorage.removeItem('token');
+    addSystem('Logged out');
+    if (socket) {
+      try { socket.disconnect(); } catch {}
+    }
+    socket = undefined;
+    authPanelEl?.classList.remove('hidden');
+    onlineLabel.textContent = '';
+  } catch (e) {
+    alert('Logout failed');
   }
 });
