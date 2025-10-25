@@ -9,6 +9,15 @@ const cookieParser = require('cookie-parser');
 const cookie = require('cookie');
 const fs = require('fs');
 const multer = require('multer');
+// Load environment variables and initialize Supabase client
+require('dotenv').config();
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || 'chat-media';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-prod';
 
@@ -101,36 +110,64 @@ function requireAuth(req, res, next) {
   }
 }
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, unique + ext);
-  },
-});
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB each
 });
 
-app.post('/api/upload', requireAuth, upload.array('files', 8), (req, res) => {
-  const files = req.files || [];
-  const attachments = files.map((f) => {
-    const mime = f.mimetype;
-    let type = 'file';
-    if (mime.startsWith('image/')) type = 'image';
-    else if (mime.startsWith('video/')) type = 'video';
-    return {
-      url: '/uploads/' + path.basename(f.filename),
-      name: f.originalname,
-      size: f.size,
-      mime,
-      type,
-    };
-  });
-  res.json({ attachments });
+app.post('/api/upload', requireAuth, upload.array('files', 8), async (req, res) => {
+  try {
+    const files = req.files || [];
+    const attachments = [];
+
+    for (const f of files) {
+      const mime = f.mimetype || 'application/octet-stream';
+      let type = 'file';
+      if (mime.startsWith('image/')) type = 'image';
+      else if (mime.startsWith('video/')) type = 'video';
+
+      const ext = path.extname(f.originalname || '') || '';
+      const base = path.basename(f.originalname || '', ext).replace(/[^a-zA-Z0-9_-]/g, '_') || 'file';
+      const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      const objectPath = `user/${req.userId}/uploads/${unique}-${base}${ext}`;
+
+      // Upload to Supabase Storage
+      const { error: uploadErr } = await supabase.storage
+        .from(SUPABASE_BUCKET)
+        .upload(objectPath, f.buffer, { contentType: mime, upsert: false });
+      if (uploadErr) {
+        console.error('Supabase upload error:', uploadErr);
+        continue; // skip this file
+      }
+
+      // Generate a signed URL for client to access
+      const { data: signed, error: signErr } = await supabase.storage
+        .from(SUPABASE_BUCKET)
+        .createSignedUrl(objectPath, 60 * 60 * 24 * 7); // 7 days
+
+      if (signErr || !signed?.signedUrl) {
+        console.error('Supabase signed URL error:', signErr);
+        continue;
+      }
+
+      attachments.push({
+        url: signed.signedUrl,
+        name: f.originalname,
+        size: f.size,
+        mime,
+        type,
+        // Also include storage reference for potential server-side usage
+        storage: { bucket: SUPABASE_BUCKET, path: objectPath }
+      });
+    }
+
+    res.json({ attachments });
+  } catch (e) {
+    console.error('Upload handler error:', e);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 
 // Socket auth middleware (reads JWT from cookie)
@@ -425,3 +462,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
+
+// Load environment variables and initialize Supabase client
