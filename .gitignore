@@ -9,7 +9,10 @@ yarn-error.log*
 
 # Environment files
 .env
-.env.*
+.env.local
+.env.development
+.env.production
+!.env.example
 
 # Prisma local database files (keep migrations)
 prisma/dev.db
