@@ -162,6 +162,25 @@ async function decryptText(roomId, text){
     return '[Encrypted message]';
   }
 }
+// E2EE helpers for attachments (binary)
+async function encryptBytes(roomId, arrayBuffer){
+  const key = await importRoomKey(roomId);
+  const iv = new Uint8Array(12); crypto.getRandomValues(iv);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, arrayBuffer);
+  return { ivB64url: toBase64Url(bytesToBase64(iv)), cipherBytes: new Uint8Array(ct) };
+}
+async function decryptBytes(roomId, ivB64url, cipherArrayBuffer){
+  try {
+    const iv = base64ToBytes(fromBase64Url(ivB64url));
+    const key = await importRoomKey(roomId);
+    const ct = cipherArrayBuffer instanceof ArrayBuffer ? cipherArrayBuffer : cipherArrayBuffer.buffer;
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return new Uint8Array(pt);
+  } catch (e) {
+    console.warn('E2EE decrypt bytes error', e);
+    return null;
+  }
+}
 function ingestRoomKeyFromUrl(roomId){
   try {
     const params = getParams();
@@ -222,7 +241,7 @@ function renderStatusTicks(status, isSelfBubble) {
   return `<div class="message-status ${colorClass} text-xs opacity-70 ml-2" data-status="${status}">${icon}</div>`;
 }
 
-function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = false, self = false, attachmentUrl = null, attachmentType = null, attachmentName = null, attachmentSize = null, attachmentMime = null, deletedAt = null, editedAt = null }) {
+function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = false, self = false, attachmentUrl = null, attachmentType = null, attachmentName = null, attachmentSize = null, attachmentMime = null, deletedAt = null, editedAt = null, attachmentEnc = false, attachmentIv = null }) {
   const li = document.createElement('li');
   if (id) li.setAttribute('data-id', id);
   li.dataset.messageId = id;
@@ -319,6 +338,33 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
           </div>
         </div>
       `;
+      // If encrypted, fetch and decrypt
+      if (attachmentEnc && attachmentIv && attachmentUrl) {
+        (async () => {
+          try {
+            const r = await fetch(attachmentUrl);
+            const encBuf = await r.arrayBuffer();
+            const plain = await decryptBytes(currentRoom, attachmentIv, encBuf);
+            if (!plain) throw new Error('decrypt failed');
+            const blob = new Blob([plain], { type: attachmentMime || 'application/octet-stream' });
+            const objUrl = URL.createObjectURL(blob);
+            const img = bubble.querySelector('img');
+            const vid = bubble.querySelector('video');
+            const link = bubble.querySelector('a');
+            const audioBtn = bubble.querySelector('.voice-play-btn');
+            if (img) img.src = objUrl;
+            if (vid) vid.src = objUrl;
+            if (link) { link.href = objUrl; link.setAttribute('download', attachmentName || 'file'); }
+            if (audioBtn) { audioBtn.dataset.audioUrl = objUrl; }
+          } catch (e) {
+            console.warn('Unable to decrypt attachment', e);
+            const sys = document.createElement('div');
+            sys.className = 'text-xs opacity-70 px-2';
+            sys.textContent = 'Unable to decrypt attachment';
+            bubble.appendChild(sys);
+          }
+        })();
+      }
     } else {
       bubble.innerHTML = `
         <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(text)}${isEdited ? ' <span class="text-xs opacity-70">(edited)</span>' : ''}</div>
@@ -780,9 +826,20 @@ async function uploadFiles(fileList) {
   if (!socket) { addSystem('Please log in first'); return; }
   const fd = new FormData();
   const files = Array.from(fileList);
+  const metas = [];
   for (const f of files) {
     if (f.size > 20*1024*1024) { addSystem(`File too large: ${f.name}`); continue; }
-    fd.append('files', f);
+    try {
+      const buf = await f.arrayBuffer();
+      const { ivB64url, cipherBytes } = await encryptBytes(currentRoom, buf);
+      const encBlob = new Blob([cipherBytes], { type: 'application/octet-stream' });
+      const encFile = new File([encBlob], (f.name || 'file') + '.enc', { type: 'application/octet-stream' });
+      fd.append('files', encFile);
+      metas.push({ originalName: f.name, originalMime: f.type, originalSize: f.size, ivB64url });
+    } catch (e) {
+      console.error('E2EE attachment encrypt error:', e);
+      addSystem(`Failed to encrypt attachment: ${f.name}`);
+    }
   }
   if ([...fd].length === 0) return;
   try {
@@ -790,8 +847,22 @@ async function uploadFiles(fileList) {
     if (!res.ok) { addSystem('Upload failed'); return; }
     const data = await res.json();
     const atts = Array.isArray(data.attachments) ? data.attachments : [];
-    for (const att of atts) {
-      socket.emit('attachment', att);
+    for (let i = 0; i < atts.length; i++) {
+      const att = atts[i] || {};
+      const meta = metas[i] || {};
+      let type = 'file';
+      const mime = meta.originalMime || att.mime || 'application/octet-stream';
+      if (mime.startsWith('image/')) type = 'image';
+      else if (mime.startsWith('video/')) type = 'video';
+      socket.emit('attachment', {
+        url: att.url,
+        name: meta.originalName || att.name,
+        size: meta.originalSize || att.size,
+        mime,
+        type,
+        enc: true,
+        iv: meta.ivB64url,
+      });
     }
   } catch (e) {
     addSystem('Upload error');

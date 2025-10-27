@@ -62,6 +62,9 @@ model Message {
   attachmentName String?
   attachmentSize Int?
   attachmentMime String?
+  // Encryption metadata for attachments (Room-secret E2EE)
+  attachmentEnc  Boolean? @default(false)
+  attachmentIv   String?
 
   room Room @relation(fields: [roomId], references: [id])
   user User @relation(fields: [userId], references: [id])

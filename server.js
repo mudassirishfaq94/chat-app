@@ -405,6 +405,8 @@ io.on('connection', (socket) => {
         attachmentName: m.attachmentName || null,
         attachmentSize: m.attachmentSize || null,
         attachmentMime: m.attachmentMime || null,
+        attachmentEnc: m.attachmentEnc || false,
+        attachmentIv: m.attachmentIv || null,
       })));
     } catch (err) {
       console.error('Error loading history:', err);
@@ -441,6 +443,7 @@ io.on('connection', (socket) => {
   });
 
   // Broadcast attachment to current room and persist with metadata
+  // Supports room-secret E2EE for attachments
   socket.on('attachment', async (att) => {
     const roomCode = socket.data.roomCode;
     const roomDbId = socket.data.roomDbId;
@@ -457,6 +460,8 @@ io.on('connection', (socket) => {
           attachmentName: att.name || null,
           attachmentSize: att.size || null,
           attachmentMime: att.mime || null,
+          attachmentEnc: att.enc ? true : false,
+          attachmentIv: att.enc && att.iv ? String(att.iv) : null,
         },
       });
       const msg = {
@@ -469,6 +474,8 @@ io.on('connection', (socket) => {
         attachmentName: created.attachmentName,
         attachmentSize: created.attachmentSize,
         attachmentMime: created.attachmentMime,
+        attachmentEnc: created.attachmentEnc,
+        attachmentIv: created.attachmentIv,
       };
       io.to(roomCode).emit('message', msg);
     } catch (err) {
