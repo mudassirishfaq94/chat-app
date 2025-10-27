@@ -1,8 +1,8 @@
 // Prisma schema for authenticated chat with persistence
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
