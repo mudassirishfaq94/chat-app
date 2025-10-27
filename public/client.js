@@ -23,6 +23,189 @@ let systemLogHideTimer;
 const SYSTEM_SHOW_MS = 6000; // show for ~6s (adjustable)
 const SYSTEM_FADE_MS = 500;  // fade duration
 
+// Reply/Forward UI elements
+const replyPreviewEl = document.getElementById('replyPreview');
+const replyPreviewTitleEl = document.getElementById('replyPreviewTitle');
+const replyPreviewBodyEl = document.getElementById('replyPreviewBody');
+const replyPreviewCloseEl = document.getElementById('replyPreviewClose');
+const selectionBarEl = document.getElementById('selectionBar');
+const selectionCountEl = document.getElementById('selectionCount');
+const selectionForwardBtn = document.getElementById('selectionForward');
+const selectionCancelBtn = document.getElementById('selectionCancel');
+const forwardModal = document.getElementById('forwardModal');
+const forwardClose = document.getElementById('forwardClose');
+const forwardSearch = document.getElementById('forwardSearch');
+const forwardList = document.getElementById('forwardList');
+const forwardConfirm = document.getElementById('forwardConfirm');
+const forwardHint = document.getElementById('forwardHint');
+
+// Local state
+const messageStore = new Map(); // id -> { id, from, ts, plainText, attachmentUrl, attachmentType, attachmentName, attachmentSize, attachmentMime, attachmentEnc, attachmentIv }
+let replyTargetId = null; // active reply target
+let forwardTargets = new Set(); // selected messages for forward (multi-select; optional)
+let forwardDestRooms = new Set(); // selected destination room codes
+
+// Reply helpers
+function clearReplyTarget() {
+  replyTargetId = null;
+  if (replyPreviewEl) {
+    replyPreviewEl.classList.add('hidden');
+    if (replyPreviewBodyEl) replyPreviewBodyEl.textContent = '';
+  }
+}
+replyPreviewCloseEl?.addEventListener('click', clearReplyTarget);
+
+// Forward modal workflow
+let forwardRoomsData = [];
+function renderForwardRoomsList(filter = '') {
+  if (!forwardList) return;
+  const q = (filter || '').toLowerCase();
+  forwardList.innerHTML = '';
+  const rooms = forwardRoomsData.filter(r => !q || (r.code || '').toLowerCase().includes(q) || String(r.id).includes(q));
+  if (rooms.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'p-3 text-sm text-slate-500';
+    empty.textContent = 'No rooms found';
+    forwardList.appendChild(empty);
+    return;
+  }
+  rooms.forEach(r => {
+    const row = document.createElement('label');
+    row.className = 'flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = forwardDestRooms.has(r.code);
+    cb.addEventListener('change', () => {
+      if (cb.checked) forwardDestRooms.add(r.code); else forwardDestRooms.delete(r.code);
+    });
+    const name = document.createElement('div');
+    name.className = 'flex-1 min-w-0';
+    name.innerHTML = `<div class="font-medium text-slate-800 truncate">${escapeHtml(r.code)}</div>`;
+    row.appendChild(cb);
+    row.appendChild(name);
+    forwardList.appendChild(row);
+  });
+}
+
+async function openForwardModal() {
+  if (!socket) { addSystem('Please log in first'); return; }
+  forwardDestRooms.clear();
+  if (forwardHint) forwardHint.textContent = '';
+  if (forwardList) {
+    forwardList.innerHTML = '<div class="p-3 text-sm text-slate-500">Loading rooms...</div>';
+  }
+  show(forwardModal);
+  // Fetch rooms via ack
+  try {
+    await new Promise((resolve) => {
+      socket.emit('list-my-rooms', (res) => {
+        forwardRoomsData = Array.isArray(res?.rooms) ? res.rooms : [];
+        renderForwardRoomsList('');
+        resolve();
+      });
+    });
+  } catch (e) {
+    if (forwardList) forwardList.innerHTML = '<div class="p-3 text-sm text-red-600">Failed to load rooms</div>';
+  }
+}
+
+// Utility: re-encrypt and upload an attachment for a destination room
+async function reencryptAndUploadAttachmentForRoom(ref, destRoomCode) {
+  try {
+    // Fetch existing encrypted bytes
+    const r = await fetch(ref.attachmentUrl);
+    const encBuf = await r.arrayBuffer();
+    // Decrypt with current room
+    const plain = await decryptBytes(currentRoom, ref.attachmentIv, encBuf);
+    if (!plain) throw new Error('decrypt failed');
+    // Encrypt with destination room
+    const { ivB64url, cipherBytes } = await encryptBytes(destRoomCode, plain.buffer);
+    const encBlob = new Blob([cipherBytes], { type: 'application/octet-stream' });
+    const fileName = (ref.attachmentName || 'file') + '.enc';
+    const encFile = new File([encBlob], fileName, { type: 'application/octet-stream' });
+    const fd = new FormData();
+    fd.append('files', encFile);
+    const up = await fetch('/api/upload', { method: 'POST', body: fd });
+    if (!up.ok) throw new Error('upload failed');
+    const data = await up.json();
+    const att = (Array.isArray(data.attachments) ? data.attachments[0] : null) || {};
+    // Infer type by mime
+    let type = 'file';
+    const mime = ref.attachmentMime || att.mime || 'application/octet-stream';
+    if (mime.startsWith('image/')) type = 'image'; else if (mime.startsWith('video/')) type = 'video';
+    return {
+      url: att.url,
+      name: ref.attachmentName || att.name,
+      size: ref.attachmentSize || att.size,
+      mime,
+      type,
+      enc: true,
+      iv: ivB64url,
+    };
+  } catch (e) {
+    console.error('Forward attachment reencrypt error:', e);
+    return null;
+  }
+}
+
+// Bind forward modal controls once
+(function bindForwardUI(){
+  forwardClose?.addEventListener('click', () => hide(forwardModal));
+  selectionCancelBtn?.addEventListener('click', () => {
+    forwardTargets.clear();
+    hide(selectionBarEl);
+  });
+  selectionForwardBtn?.addEventListener('click', async () => {
+    await openForwardModal();
+  });
+  forwardSearch?.addEventListener('input', (e) => {
+    renderForwardRoomsList(e.target.value || '');
+  });
+  forwardConfirm?.addEventListener('click', async () => {
+    if (!socket) { addSystem('Please log in first'); return; }
+    if (forwardTargets.size === 0) { if (forwardHint) forwardHint.textContent = 'No messages selected to forward'; return; }
+    if (forwardDestRooms.size === 0) { if (forwardHint) forwardHint.textContent = 'Choose at least one room'; return; }
+    forwardConfirm.disabled = true;
+    const origText = forwardConfirm.textContent;
+    forwardConfirm.textContent = 'Forwarding...';
+    const items = [];
+    const targets = Array.from(forwardTargets);
+    const destRooms = Array.from(forwardDestRooms);
+    for (const dest of destRooms) {
+      for (const id of targets) {
+        const ref = messageStore.get(id);
+        if (!ref) continue;
+        const meta = {
+          replyToId: null,
+          forwardFromMessageId: id,
+          forwardedOriginalSenderName: ref.from || null,
+          forwardedOriginalTimestamp: ref.ts || null,
+        };
+        if (ref.plainText && ref.plainText.trim()) {
+          try {
+            const cipher = await encryptText(dest, ref.plainText);
+            items.push({ roomCode: dest, text: cipher, ...meta });
+          } catch (e) { console.error('Encrypt forward text error:', e); }
+        } else if (ref.attachmentUrl) {
+          const att = await reencryptAndUploadAttachmentForRoom(ref, dest);
+          if (att) items.push({ roomCode: dest, attachment: att, ...meta });
+        }
+      }
+    }
+    if (items.length === 0) { if (forwardHint) forwardHint.textContent = 'Nothing to forward'; forwardConfirm.disabled = false; forwardConfirm.textContent = origText; return; }
+    socket.emit('forward-to', { items }, (res) => {
+      forwardConfirm.disabled = false;
+      forwardConfirm.textContent = origText;
+      if (!res || res.ok !== true) { if (forwardHint) forwardHint.textContent = 'Forward failed'; return; }
+      hide(forwardModal);
+      forwardTargets.clear();
+      forwardDestRooms.clear();
+      hide(selectionBarEl);
+      addSystem('Forwarded successfully');
+    });
+  });
+})();
+
 // Modal elements
 const signupOpen = document.getElementById('signupOpen');
 const loginOpen = document.getElementById('loginOpen');
@@ -242,6 +425,10 @@ function renderStatusTicks(status, isSelfBubble) {
 }
 
 function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = false, self = false, attachmentUrl = null, attachmentType = null, attachmentName = null, attachmentSize = null, attachmentMime = null, deletedAt = null, editedAt = null, attachmentEnc = false, attachmentIv = null }) {
+  // Persist minimal info in local store for reply/forward refs
+  if (id) {
+    messageStore.set(id, { id, from, ts, plainText: text || '', attachmentUrl, attachmentType, attachmentName, attachmentSize, attachmentMime, attachmentEnc, attachmentIv });
+  }
   const li = document.createElement('li');
   if (id) li.setAttribute('data-id', id);
   li.dataset.messageId = id;
@@ -366,7 +553,23 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
         })();
       }
     } else {
+      // Text-only bubble, with optional reply/forward headers
+      const headerParts = [];
+      // Render reply quote if this message replies to another
+      if (typeof arguments[0] === 'object' && arguments[0] && arguments[0].replyToId) {
+        const ref = messageStore.get(arguments[0].replyToId);
+        if (ref) {
+          const quoted = ref.plainText ? escapeHtml(ref.plainText) : (ref.attachmentName ? `Attachment: ${escapeHtml(ref.attachmentName)}` : 'Attachment');
+          headerParts.push(`<div class="mb-1 border-l-4 border-gray-300 pl-2 text-xs text-slate-600 italic">${quoted}</div>`);
+        }
+      }
+      // Render forwarded label if present
+      if (typeof arguments[0] === 'object' && arguments[0] && (arguments[0].forwardFromMessageId || arguments[0].forwardedOriginalSenderName)) {
+        const fromName = arguments[0].forwardedOriginalSenderName ? escapeHtml(arguments[0].forwardedOriginalSenderName) : 'Forwarded';
+        headerParts.push(`<div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">Forwarded${arguments[0].forwardedOriginalSenderName ? ` • from ${fromName}` : ''}</div>`);
+      }
       bubble.innerHTML = `
+        ${headerParts.join('')}
         <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(text)}${isEdited ? ' <span class="text-xs opacity-70">(edited)</span>' : ''}</div>
         <div class="flex items-center justify-between mt-1">
           <div class="text-xs opacity-70">${time}</div>
@@ -375,7 +578,7 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
       `;
     }
     
-    if ((self || currentUserIsAdmin) && socket && !isDeleted) {
+    if (socket && !isDeleted) {
       const wrap = document.createElement('div');
       wrap.className = 'flex items-start gap-2';
       wrap.style.position = 'relative';
@@ -408,8 +611,9 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
       const menu = document.createElement('div');
       menu.className = 'text-sm';
       menu.style.position = 'absolute';
-      menu.style.right = '0';
+      // Positioning: flip based on bubble side to avoid viewport overflow
       menu.style.top = '18px';
+      if (self) { menu.style.right = '0'; menu.style.left = ''; } else { menu.style.left = '0'; menu.style.right = ''; }
       menu.style.background = '#ffffff';
       menu.style.color = '#0f172a';
       menu.style.border = '1px solid #e5e7eb';
@@ -417,21 +621,61 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
       menu.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)';
       menu.style.zIndex = '50';
       menu.style.minWidth = '160px';
+      menu.style.maxWidth = 'calc(100vw - 24px)';
       menu.style.display = 'none';
+      // Build menu items dynamically: Reply, Forward always; Edit/Delete if allowed
+      const canEdit = !!self;
+      const canDelete = !!self || !!currentUserIsAdmin;
       menu.innerHTML = `
-        <button class="w-full text-left px-3 py-2 hover:bg-gray-100">Edit message</button>
-        <button class="w-full text-left px-3 py-2 hover:bg-gray-100">Delete message</button>
+        <button class="w-full text-left px-3 py-2 hover:bg-gray-100" data-action="reply">Reply</button>
+        <button class="w-full text-left px-3 py-2 hover:bg-gray-100" data-action="forward">Forward</button>
+        ${canEdit ? '<button class="w-full text-left px-3 py-2 hover:bg-gray-100" data-action="edit">Edit message</button>' : ''}
+        ${canDelete ? '<button class="w-full text-left px-3 py-2 hover:bg-gray-100" data-action="delete">Delete message</button>' : ''}
       `;
       anchor.appendChild(menu);
 
-      const toggleMenu = (visible) => { menu.style.display = visible ? 'block' : 'none'; };
+      const toggleMenu = (visible) => { 
+        menu.style.display = visible ? 'block' : 'none';
+        if (visible) {
+          // Ensure menu stays within viewport horizontally
+          const rect = menu.getBoundingClientRect();
+          if (rect.left < 8) { menu.style.left = '0'; menu.style.right = ''; }
+          if (rect.right > window.innerWidth - 8) { menu.style.right = '0'; menu.style.left = ''; }
+        }
+      };
       kebabBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(menu.style.display !== 'block'); });
       document.addEventListener('click', (e) => { if (!menu.contains(e.target) && e.target !== kebabBtn) toggleMenu(false); });
 
-      const [editBtn, deleteBtn] = menu.querySelectorAll('button');
+      const replyBtn = menu.querySelector('button[data-action="reply"]');
+      const forwardBtn = menu.querySelector('button[data-action="forward"]');
+      const editBtn = menu.querySelector('button[data-action="edit"]');
+      const deleteBtn = menu.querySelector('button[data-action="delete"]');
+
+      // Reply flow: show reply preview bar and set target
+      replyBtn?.addEventListener('click', () => {
+        toggleMenu(false);
+        if (!id) return;
+        replyTargetId = id;
+        if (replyPreviewEl) {
+          replyPreviewTitleEl.textContent = 'Replying to';
+          const quoted = (text && text.trim()) ? text.trim() : (attachmentName ? `Attachment: ${attachmentName}` : 'Attachment');
+          replyPreviewBodyEl.textContent = quoted;
+          replyPreviewEl.classList.remove('hidden');
+        }
+        // Focus input to continue typing
+        inputEl.focus();
+      });
+
+      // Forward flow: open forward modal and capture destination rooms
+      forwardBtn?.addEventListener('click', async () => {
+        toggleMenu(false);
+        if (!id) return;
+        forwardTargets = new Set([id]);
+        await openForwardModal();
+      });
 
       // Edit flow
-      editBtn.addEventListener('click', () => {
+      editBtn?.addEventListener('click', () => {
         toggleMenu(false);
         if (attachmentUrl) return; // skip editing attachments
         const currentText = text || '';
@@ -501,7 +745,7 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
       });
 
       // Delete flow: immediate action on menu click (no second confirm)
-      deleteBtn.addEventListener('click', () => {
+      deleteBtn?.addEventListener('click', () => {
         console.log('[Delete] Menu clicked for message id=', id);
         toggleMenu(false);
         if (!id) return;
@@ -775,10 +1019,26 @@ async function uploadVoiceMessage(audioBlob) {
     addSystem('Please log in first'); 
     return; 
   }
-  
+  // Encrypt voice blob before upload
   const formData = new FormData();
-  const audioFile = new File([audioBlob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
-  formData.append('files', audioFile);
+  let originalName = `voice-${Date.now()}.webm`;
+  let originalMime = 'audio/webm';
+  let originalSize = audioBlob.size || null;
+  try {
+    const buf = await audioBlob.arrayBuffer();
+    const { ivB64url, cipherBytes } = await encryptBytes(currentRoom, buf);
+    const encBlob = new Blob([cipherBytes], { type: 'application/octet-stream' });
+    const encFile = new File([encBlob], originalName + '.enc', { type: 'application/octet-stream' });
+    formData.append('files', encFile);
+    formData.append('meta_iv', ivB64url); // backup if needed (not used by server)
+    formData.append('meta_original', JSON.stringify({ originalName, originalMime, originalSize }));
+    // Store metadata for emit phase
+    uploadVoiceMessage._meta = { ivB64url };
+  } catch (e) {
+    console.error('E2EE voice encrypt error:', e);
+    addSystem('Failed to encrypt voice message');
+    return;
+  }
   
   try {
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
@@ -791,9 +1051,17 @@ async function uploadVoiceMessage(audioBlob) {
     const attachments = Array.isArray(data.attachments) ? data.attachments : [];
     
     for (const att of attachments) {
-      // Mark as voice message
-      att.isVoiceMessage = true;
-      socket.emit('attachment', att);
+      // Mark as voice message and include encryption metadata
+      socket.emit('attachment', {
+        url: att.url,
+        name: originalName,
+        size: originalSize || att.size,
+        mime: originalMime,
+        type: 'file', // we render audio by mime
+        enc: true,
+        iv: uploadVoiceMessage._meta?.ivB64url,
+        replyToId: replyTargetId || null,
+      });
     }
   } catch (error) {
     addSystem('Voice message upload error');
@@ -862,6 +1130,7 @@ async function uploadFiles(fileList) {
         type,
         enc: true,
         iv: meta.ivB64url,
+        replyToId: replyTargetId || null,
       });
     }
   } catch (e) {
@@ -875,13 +1144,17 @@ formEl.addEventListener('submit', async (e) => {
   if (!socket) { addSystem('Please log in first'); return; }
   try {
     const cipher = await encryptText(currentRoom, text);
-    socket.emit('message', cipher);
+    const payload = { text: cipher };
+    if (replyTargetId) payload.replyToId = replyTargetId;
+    socket.emit('message', payload);
   } catch (err) {
     console.error('E2EE encrypt error:', err);
     addSystem('Encryption failed; message was not sent');
     return;
   }
   inputEl.value = '';
+  // Clear reply state after sending
+  clearReplyTarget();
   typingUsers.delete(nameInputEl.value.trim() || 'You');
   renderTyping();
 });
@@ -1133,6 +1406,54 @@ function bindBottomNav() {
   });
 }
 bindBottomNav();
+
+// Compute bottom nav height for mobile and expose CSS variable for safe positioning
+function updateBottomOffsets() {
+  const nav = document.getElementById('bottomNav');
+  const h = nav ? nav.offsetHeight : 56;
+  document.documentElement.style.setProperty('--bottom-nav-height', h + 'px');
+}
+updateBottomOffsets();
+window.addEventListener('resize', updateBottomOffsets);
+window.addEventListener('orientationchange', updateBottomOffsets);
+
+function updateInputBarHeight() {
+  const formEl = document.getElementById('form');
+  const h = formEl ? formEl.offsetHeight : 120;
+  document.documentElement.style.setProperty('--input-bar-height', h + 'px');
+}
+updateInputBarHeight();
+window.addEventListener('resize', updateInputBarHeight);
+window.addEventListener('orientationchange', updateInputBarHeight);
+
+// Auto-resize textarea with a sensible cap on mobile so the input bar stays compact
+function resizeInputTextarea() {
+  try {
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    const maxHeight = isMobile ? 96 : 160; // px cap
+    inputEl.style.height = 'auto';
+    const h = Math.min(inputEl.scrollHeight, maxHeight);
+    inputEl.style.height = h + 'px';
+    updateInputBarHeight();
+  } catch {}
+}
+
+resizeInputTextarea();
+inputEl.addEventListener('input', resizeInputTextarea);
+window.addEventListener('resize', resizeInputTextarea);
+window.addEventListener('orientationchange', resizeInputTextarea);
+
+// Ensure input bar is visible when focusing (mobile keyboards)
+inputEl.addEventListener('focus', () => {
+  try {
+    setTimeout(() => {
+      const rect = inputEl.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight) {
+        window.scrollBy({ top: rect.bottom - window.innerHeight + 24, behavior: 'smooth' });
+      }
+    }, 120);
+  } catch {}
+});
 
 // Swipe gestures for switching between chat and friends on mobile
 (function bindSwipe() {

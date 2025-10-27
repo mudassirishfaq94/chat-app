@@ -407,18 +407,44 @@ io.on('connection', (socket) => {
         attachmentMime: m.attachmentMime || null,
         attachmentEnc: m.attachmentEnc || false,
         attachmentIv: m.attachmentIv || null,
+        // Reply / Forward metadata
+        replyToId: m.replyToId || null,
+        forwardFromMessageId: m.forwardFromMessageId || null,
+        forwardedByUserId: m.forwardedByUserId || null,
+        forwardedOriginalSenderName: m.forwardedOriginalSenderName || null,
+        forwardedOriginalTimestamp: m.forwardedOriginalTimestamp ? new Date(m.forwardedOriginalTimestamp).getTime() : null,
       })));
     } catch (err) {
       console.error('Error loading history:', err);
     }
   });
 
+  // List rooms the current user is a member of (for forwarding UI)
+  socket.on('list-my-rooms', async (ack) => {
+    try {
+      const memberships = await prisma.membership.findMany({
+        where: { userId: socket.data.user.id },
+        include: { room: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      const roomsList = memberships.map(m => ({ id: m.room.id, code: m.room.code }));
+      if (ack) ack({ ok: true, rooms: roomsList });
+    } catch (e) {
+      if (ack) ack({ ok: false, error: 'Failed to list rooms' });
+    }
+  });
+
   // Broadcast message to current room and persist with ownership
-  socket.on('message', async (text) => {
+  socket.on('message', async (payload) => {
     const roomCode = socket.data.roomCode;
     const roomDbId = socket.data.roomDbId;
     if (!roomCode || !roomDbId) return; // not in a room
-    const msgText = String(text || '').trim();
+    const isObj = payload && typeof payload === 'object' && !Array.isArray(payload);
+    const msgText = String((isObj ? payload.text : payload) || '').trim();
+    const replyToId = isObj ? (payload.replyToId ? Number(payload.replyToId) : null) : null;
+    const forwardFromMessageId = isObj ? (payload.forwardFromMessageId ? Number(payload.forwardFromMessageId) : null) : null;
+    const forwardedOriginalSenderName = isObj ? (payload.forwardedOriginalSenderName || null) : null;
+    const forwardedOriginalTimestamp = isObj && payload.forwardedOriginalTimestamp ? new Date(Number(payload.forwardedOriginalTimestamp)) : null;
     if (!msgText) return;
 
     try {
@@ -427,6 +453,11 @@ io.on('connection', (socket) => {
           roomId: roomDbId,
           userId: socket.data.user.id,
           text: msgText,
+          replyToId: replyToId || undefined,
+          forwardFromMessageId: forwardFromMessageId || undefined,
+          forwardedByUserId: forwardFromMessageId ? socket.data.user.id : undefined,
+          forwardedOriginalSenderName: forwardedOriginalSenderName || undefined,
+          forwardedOriginalTimestamp: forwardedOriginalTimestamp || undefined,
         },
       });
       const msg = {
@@ -435,6 +466,11 @@ io.on('connection', (socket) => {
         from: socket.data.name,
         text: msgText,
         ts: new Date(created.createdAt).getTime(),
+        replyToId: created.replyToId || null,
+        forwardFromMessageId: created.forwardFromMessageId || null,
+        forwardedByUserId: created.forwardedByUserId || null,
+        forwardedOriginalSenderName: created.forwardedOriginalSenderName || null,
+        forwardedOriginalTimestamp: created.forwardedOriginalTimestamp ? new Date(created.forwardedOriginalTimestamp).getTime() : null,
       };
       io.to(roomCode).emit('message', msg);
     } catch (err) {
@@ -462,6 +498,11 @@ io.on('connection', (socket) => {
           attachmentMime: att.mime || null,
           attachmentEnc: att.enc ? true : false,
           attachmentIv: att.enc && att.iv ? String(att.iv) : null,
+          replyToId: att.replyToId ? Number(att.replyToId) : undefined,
+          forwardFromMessageId: att.forwardFromMessageId ? Number(att.forwardFromMessageId) : undefined,
+          forwardedByUserId: att.forwardFromMessageId ? socket.data.user.id : undefined,
+          forwardedOriginalSenderName: att.forwardedOriginalSenderName || undefined,
+          forwardedOriginalTimestamp: att.forwardedOriginalTimestamp ? new Date(Number(att.forwardedOriginalTimestamp)) : undefined,
         },
       });
       const msg = {
@@ -476,11 +517,83 @@ io.on('connection', (socket) => {
         attachmentMime: created.attachmentMime,
         attachmentEnc: created.attachmentEnc,
         attachmentIv: created.attachmentIv,
+        replyToId: created.replyToId || null,
+        forwardFromMessageId: created.forwardFromMessageId || null,
+        forwardedByUserId: created.forwardedByUserId || null,
+        forwardedOriginalSenderName: created.forwardedOriginalSenderName || null,
+        forwardedOriginalTimestamp: created.forwardedOriginalTimestamp ? new Date(created.forwardedOriginalTimestamp).getTime() : null,
       };
       io.to(roomCode).emit('message', msg);
     } catch (err) {
       console.error('Error saving attachment:', err);
     }
+  });
+
+  // Forward pre-encrypted items to specific target rooms
+  // Payload: { items: [{ roomCode, text?, attachment?: { url, type, name, size, mime, enc, iv }, replyToId?, forwardFromMessageId?, forwardedOriginalSenderName?, forwardedOriginalTimestamp? }] }
+  socket.on('forward-to', async (payload, ack) => {
+    if (!payload || !Array.isArray(payload.items)) { if (ack) ack({ ok: false, error: 'Invalid payload' }); return; }
+    const results = [];
+    for (const item of payload.items) {
+      try {
+        if (!item.roomCode) { results.push({ ok: false, error: 'Missing roomCode' }); continue; }
+        let room = await prisma.room.findUnique({ where: { code: item.roomCode } });
+        if (!room) {
+          room = await prisma.room.create({ data: { code: item.roomCode, ownerId: socket.data.user.id } });
+          await prisma.membership.create({ data: { userId: socket.data.user.id, roomId: room.id } });
+        } else {
+          // Ensure membership
+          await prisma.membership.upsert({
+            where: { userId_roomId: { userId: socket.data.user.id, roomId: room.id } },
+            update: {},
+            create: { userId: socket.data.user.id, roomId: room.id },
+          });
+        }
+        const data = {
+          roomId: room.id,
+          userId: socket.data.user.id,
+          text: item.text || '',
+          attachmentUrl: item.attachment?.url || null,
+          attachmentType: item.attachment?.type || null,
+          attachmentName: item.attachment?.name || null,
+          attachmentSize: item.attachment?.size || null,
+          attachmentMime: item.attachment?.mime || null,
+          attachmentEnc: item.attachment?.enc ? true : false,
+          attachmentIv: item.attachment?.iv ? String(item.attachment.iv) : null,
+          replyToId: item.replyToId ? Number(item.replyToId) : undefined,
+          forwardFromMessageId: item.forwardFromMessageId ? Number(item.forwardFromMessageId) : undefined,
+          forwardedByUserId: item.forwardFromMessageId ? socket.data.user.id : undefined,
+          forwardedOriginalSenderName: item.forwardedOriginalSenderName || undefined,
+          forwardedOriginalTimestamp: item.forwardedOriginalTimestamp ? new Date(Number(item.forwardedOriginalTimestamp)) : undefined,
+        };
+        const created = await prisma.message.create({ data });
+        const msg = {
+          id: created.id,
+          userId: socket.data.user.id,
+          from: socket.data.name,
+          text: created.text,
+          ts: new Date(created.createdAt).getTime(),
+          attachmentUrl: created.attachmentUrl,
+          attachmentType: created.attachmentType,
+          attachmentName: created.attachmentName,
+          attachmentSize: created.attachmentSize,
+          attachmentMime: created.attachmentMime,
+          attachmentEnc: created.attachmentEnc,
+          attachmentIv: created.attachmentIv,
+          replyToId: created.replyToId || null,
+          forwardFromMessageId: created.forwardFromMessageId || null,
+          forwardedByUserId: created.forwardedByUserId || null,
+          forwardedOriginalSenderName: created.forwardedOriginalSenderName || null,
+          forwardedOriginalTimestamp: created.forwardedOriginalTimestamp ? new Date(created.forwardedOriginalTimestamp).getTime() : null,
+        };
+        io.to(item.roomCode).emit('message', msg);
+        results.push({ ok: true, id: created.id, roomCode: item.roomCode });
+      } catch (e) {
+        console.error('Forward error:', e);
+        results.push({ ok: false, error: 'Forward failed' });
+      }
+    }
+    if (ack) ack({ ok: true, results });
   });
 
   // Change display name (updates user profile)

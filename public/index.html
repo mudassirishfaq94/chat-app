@@ -79,6 +79,36 @@
         --color-success: #22c55e;
       }
 
+      /* Mobile input bar: fixed at bottom, above bottom nav, safe-area aware */
+      @media (max-width: 768px) {
+        /* Leave space inside main so fixed form never overlaps messages */
+        .chat-main { padding-bottom: calc(env(safe-area-inset-bottom) + var(--bottom-nav-height, 56px) + var(--input-bar-height, 104px)); }
+        /* Fixed input bar */
+        #form {
+          position: fixed;
+          left: 0;
+          right: 0;
+          bottom: calc(env(safe-area-inset-bottom) + var(--bottom-nav-height, 56px)); /* sit above bottom nav */
+          z-index: 45; /* above nav but below modals (50+) */
+          padding: 6px 10px; /* tighter padding for smaller bar */
+          margin: 0 auto;
+          background-color: var(--color-surface);
+          border-top: 1px solid var(--color-border);
+          box-shadow: 0 -6px 16px rgba(0,0,0,0.06);
+        }
+        /* Compact, but still tappable */
+        #form button { min-height: 36px; padding: 6px 10px; }
+        #form .rounded { min-height: 36px; }
+        #input {
+          min-height: 36px;
+          max-height: 96px; /* cap to ~3 lines */
+          line-height: 1.3;
+          padding: 6px 10px;
+          font-size: 0.95rem;
+          overflow-y: auto;
+        }
+      }
+
       /* Global application surfaces */
       body { background-color: var(--color-bg); color: var(--color-text); transition: background-color 200ms ease, color 200ms ease; }
       #appShell, header, #mobileNav, main, footer { background-color: var(--color-surface); color: var(--color-text); border-color: var(--color-border); transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease; }
@@ -268,6 +298,14 @@
         <button id="attachBtn" type="button" class="bg-slate-100 text-slate-700 border border-gray-300 px-3 py-2 rounded hover:bg-slate-200" title="Add attachments">📎</button>
         <input id="fileInput" type="file" class="hidden" multiple accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" />
         <button id="voiceBtn" type="button" class="bg-slate-100 text-slate-700 border border-gray-300 px-3 py-2 rounded hover:bg-slate-200 transition-colors" title="Record voice message">🎤</button>
+        <!-- Reply preview bar (shown when replying) -->
+        <div id="replyPreview" class="hidden flex-1 border border-gray-300 bg-slate-50 rounded px-3 py-2 text-sm text-slate-700 relative">
+          <div class="border-l-4 border-blue-500 pl-2">
+            <div id="replyPreviewTitle" class="text-xs text-slate-500">Replying to</div>
+            <div id="replyPreviewBody" class="line-clamp-2"></div>
+          </div>
+          <button id="replyPreviewClose" type="button" class="absolute right-2 top-2 text-slate-500 hover:text-slate-700" aria-label="Cancel reply">✕</button>
+        </div>
         <textarea id="input" rows="1" autocomplete="off" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" class="flex-1 border border-gray-300 bg-white text-slate-900 rounded px-3 py-2 placeholder-slate-400"></textarea>
         <button class="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded hover:bg-slate-700">Send</button>
       </form>
@@ -385,5 +423,30 @@
 
   <script src="/socket.io/socket.io.js" defer></script>
   <script src="./client.js" defer></script>
+
+  <!-- Forward Modal -->
+  <div id="forwardModal" class="fixed inset-0 bg-black/30 flex items-center justify-center hidden" role="dialog" aria-modal="true" aria-labelledby="forwardTitle">
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+      <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 id="forwardTitle" class="text-base sm:text-lg font-semibold text-slate-800">Forward to...</h2>
+        <button id="forwardClose" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm" aria-label="Close">Close</button>
+      </div>
+      <div class="p-5 space-y-3">
+        <input id="forwardSearch" type="text" placeholder="Search contacts or rooms" class="w-full px-3 py-2 border border-gray-300 rounded bg-white text-slate-900" />
+        <div id="forwardList" class="max-h-56 overflow-y-auto border border-gray-200 rounded divide-y"></div>
+        <div class="pt-2 flex items-center justify-end gap-2">
+          <button id="forwardConfirm" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Forward</button>
+        </div>
+        <p id="forwardHint" class="text-xs text-slate-500">Note: Forwarded messages will be re-encrypted for each destination. If a destination room’s secret isn’t known on this device yet, you may need to open that room’s invite link first so its secret is stored.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Selection Action Bar (appears in multi-select mode) -->
+  <div id="selectionBar" class="fixed bottom-16 left-1/2 -translate-x-1/2 bg-white border border-gray-200 rounded-lg shadow-lg px-4 py-2 hidden">
+    <span id="selectionCount" class="text-sm text-slate-700 mr-3">0 selected</span>
+    <button id="selectionForward" class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm">Forward</button>
+    <button id="selectionCancel" class="ml-2 px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Cancel</button>
+  </div>
 </body>
 </html>

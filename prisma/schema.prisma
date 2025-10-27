@@ -20,6 +20,7 @@ model User {
   rooms        Room[]    @relation("RoomOwner")
   memberships  Membership[]
   messages     Message[]
+  forwardedMessages Message[] @relation("ForwardedBy")
   auditLogs    AuditLog[]
 }
 
@@ -66,10 +67,26 @@ model Message {
   attachmentEnc  Boolean? @default(false)
   attachmentIv   String?
 
+  // Reply threading (quoting a previous message)
+  replyToId  Int?
+  replyTo    Message?  @relation("ReplyTo", fields: [replyToId], references: [id])
+  replies    Message[] @relation("ReplyTo")
+
+  // Forwarding metadata (preserve original provenance)
+  forwardFromMessageId Int?
+  forwardFrom          Message?  @relation("ForwardFrom", fields: [forwardFromMessageId], references: [id])
+  forwards             Message[] @relation("ForwardFrom")
+  forwardedByUserId    Int?
+  forwardedBy          User?     @relation("ForwardedBy", fields: [forwardedByUserId], references: [id])
+  forwardedOriginalSenderName String?
+  forwardedOriginalTimestamp DateTime?
+
   room Room @relation(fields: [roomId], references: [id])
   user User @relation(fields: [userId], references: [id])
 
   @@index([roomId, createdAt])
+  @@index([replyToId])
+  @@index([forwardFromMessageId])
 }
 
 // Audit logs for admin dashboard
