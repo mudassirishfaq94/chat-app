@@ -104,6 +104,82 @@ if (!currentRoom) {
 const invitedBy = getInvitedByFromUrl();
 if (invitedBy) inviteLabel.textContent = `Invited by ${invitedBy}`;
 
+// --- Simple Room-Secret E2EE helpers (Option 2) ---
+const ROOM_KEY_PREFIX = 'roomKey:';
+function bytesToBase64(bytes){
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function base64ToBytes(b64){
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function toBase64Url(b64){ return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function fromBase64Url(b64url){
+  let b64 = b64url.replace(/-/g,'+').replace(/_/g,'/');
+  const pad = b64.length % 4;
+  if (pad) b64 += '='.repeat(4-pad);
+  return b64;
+}
+function ensureRoomKeyString(roomId){
+  let keyStr = localStorage.getItem(ROOM_KEY_PREFIX + roomId);
+  if (!keyStr) {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    keyStr = toBase64Url(bytesToBase64(bytes));
+    localStorage.setItem(ROOM_KEY_PREFIX + roomId, keyStr);
+  }
+  return keyStr;
+}
+async function importRoomKey(roomId){
+  const keyStr = ensureRoomKeyString(roomId);
+  const raw = base64ToBytes(fromBase64Url(keyStr));
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt','decrypt']);
+}
+async function encryptText(roomId, plain){
+  const key = await importRoomKey(roomId);
+  const iv = new Uint8Array(12); crypto.getRandomValues(iv);
+  const data = new TextEncoder().encode(plain);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+  const ivB64url = toBase64Url(bytesToBase64(iv));
+  const ctB64url = toBase64Url(bytesToBase64(new Uint8Array(ct)));
+  return `e2ee:v1:${ivB64url}:${ctB64url}`;
+}
+async function decryptText(roomId, text){
+  if (typeof text !== 'string' || !text.startsWith('e2ee:v1:')) return text;
+  try {
+    const parts = text.split(':');
+    const iv = base64ToBytes(fromBase64Url(parts[2]));
+    const ct = base64ToBytes(fromBase64Url(parts[3]));
+    const key = await importRoomKey(roomId);
+    const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return new TextDecoder().decode(buf);
+  } catch (e) {
+    console.warn('E2EE decrypt error', e);
+    return '[Encrypted message]';
+  }
+}
+function ingestRoomKeyFromUrl(roomId){
+  try {
+    const params = getParams();
+    const rk = params.get('rk');
+    if (rk) {
+      localStorage.setItem(ROOM_KEY_PREFIX + roomId, rk);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('rk');
+      window.history.replaceState({}, '', url);
+      addSystem('Imported room secret from invite link');
+    }
+    // Ensure a key exists for this room
+    ensureRoomKeyString(roomId);
+  } catch {}
+}
+// Initialize room secret on load
+ingestRoomKeyFromUrl(currentRoom);
+
 function showSystemLog() {
   clearTimeout(systemLogHideTimer);
   systemLogEl.classList.remove('hidden');
@@ -331,22 +407,32 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
         input.focus();
         const cleanup = () => editor.remove();
         cancelBtn.addEventListener('click', cleanup);
-        saveBtn.addEventListener('click', () => {
+        saveBtn.addEventListener('click', async () => {
           const newText = input.value.trim();
           if (!newText || newText === currentText) { cleanup(); return; }
           if (socket && id) {
             saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
-            socket.emit('edit-message', { messageId: id, newText }, (res) => {
+            // Encrypt edited text with room secret
+            let encryptedEdit = newText;
+            try {
+              encryptedEdit = await encryptText(currentRoom, newText);
+            } catch (e) {
+              console.error('E2EE encrypt (edit) error:', e);
+              addSystem('Encryption failed; edit not sent');
+              saveBtn.disabled = false; saveBtn.textContent = 'Save';
+              return;
+            }
+            socket.emit('edit-message', { messageId: id, newText: encryptedEdit }, (res) => {
               saveBtn.disabled = false; saveBtn.textContent = 'Save';
               if (res && res.ok) {
                 // Update UI immediately
                 const textEl = bubble.querySelector('.text-sm.break-words.whitespace-pre-wrap');
                 if (textEl) {
-                  textEl.innerHTML = `${escapeHtml(res.text)} <span class="text-xs opacity-70">(edited)</span>`;
+                  textEl.innerHTML = `${escapeHtml(newText)} <span class="text-xs opacity-70">(edited)</span>`;
                 } else {
                   // Fallback: rebuild bubble content for text-only
                   bubble.innerHTML = `
-                    <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(res.text)} <span class="text-xs opacity-70">(edited)</span></div>
+                    <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(newText)} <span class="text-xs opacity-70">(edited)</span></div>
                     <div class="flex items-center justify-between mt-1">
                       <div class="text-xs opacity-70">${new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                       ${self ? '<div class="message-status text-xs opacity-70 ml-2">Sent</div>' : ''}
@@ -504,9 +590,10 @@ function connectSocket() {
     } catch {}
   });
 
-  socket.on('message', (msg) => {
+  socket.on('message', async (msg) => {
     const self = (msg.userId && currentUserId) ? (msg.userId === currentUserId) : (msg.from === (nameInputEl.value.trim() || ''));
-    addMessage({ ...msg, self });
+    const decryptedText = await decryptText(currentRoom, msg.text);
+    addMessage({ ...msg, text: decryptedText, self });
     // Recipient acknowledges delivery immediately upon receiving
     try {
       if (!self && msg.id) {
@@ -515,12 +602,13 @@ function connectSocket() {
     } catch {}
   });
 
-  socket.on('history', (msgs) => {
+  socket.on('history', async (msgs) => {
     if (!Array.isArray(msgs)) return;
-    msgs.forEach((msg) => {
+    for (const msg of msgs) {
       const self = (msg.userId && currentUserId) ? (msg.userId === currentUserId) : (msg.from === (nameInputEl.value.trim() || ''));
-      addMessage({ ...msg, self });
-    });
+      const decryptedText = await decryptText(currentRoom, msg.text);
+      addMessage({ ...msg, text: decryptedText, self });
+    }
   });
 
   socket.on('message-deleted', (msgId) => {
@@ -563,14 +651,15 @@ function connectSocket() {
     if (actionsAnchor) actionsAnchor.remove();
   });
 
-  socket.on('message-edited', (data) => {
+  socket.on('message-edited', async (data) => {
     const li = messagesEl.querySelector(`li[data-id="${data.id}"]`);
     if (!li) return;
     const bubble = li.querySelector('.max-w-xs') || li.querySelector('.lg\\:max-w-md') || li.querySelector('div[class*="max-w-"]');
     if (!bubble) return;
     const textEl = bubble.querySelector('.text-sm.break-words.whitespace-pre-wrap');
     if (textEl) {
-      textEl.innerHTML = `${escapeHtml(data.text)} <span class="text-xs opacity-70">(edited)</span>`;
+      const decrypted = await decryptText(currentRoom, data.text);
+      textEl.innerHTML = `${escapeHtml(decrypted)} <span class="text-xs opacity-70">(edited)</span>`;
     }
   });
 
@@ -580,17 +669,7 @@ function connectSocket() {
   });
 }
 
-// Send message
-formEl.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const text = inputEl.value.trim();
-  if (!text) return;
-  if (!socket) { addSystem('Please log in first'); return; }
-  socket.emit('message', text);
-  inputEl.value = '';
-  typingUsers.delete(nameInputEl.value.trim() || 'You');
-  renderTyping();
-});
+// Send message (handler defined later, with E2EE)
 
 // Voice recording functionality
 let mediaRecorder = null;
@@ -718,12 +797,19 @@ async function uploadFiles(fileList) {
     addSystem('Upload error');
   }
 }
-formEl.addEventListener('submit', (e) => {
+formEl.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = inputEl.value.trim();
   if (!text) return;
   if (!socket) { addSystem('Please log in first'); return; }
-  socket.emit('message', text);
+  try {
+    const cipher = await encryptText(currentRoom, text);
+    socket.emit('message', cipher);
+  } catch (err) {
+    console.error('E2EE encrypt error:', err);
+    addSystem('Encryption failed; message was not sent');
+    return;
+  }
   inputEl.value = '';
   typingUsers.delete(nameInputEl.value.trim() || 'You');
   renderTyping();
@@ -782,6 +868,9 @@ copyLinkBtn.addEventListener('click', async () => {
     const url = new URL(window.location.href);
     url.searchParams.set('room', currentRoom);
     url.searchParams.set('invitedBy', hostName);
+    // Include room secret so invitee can decrypt messages
+    const secret = ensureRoomKeyString(currentRoom);
+    url.searchParams.set('rk', secret);
     await navigator.clipboard.writeText(url.toString());
     copyLinkBtn.textContent = 'Link Copied!';
     setTimeout(() => (copyLinkBtn.textContent = 'Copy Invite Link'), 1500);
