@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard • ChatX</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --fg: #e6e9ef;
+      --muted: #a8b0c2;
+      --accent: #4f46e5;
+      --card: #111633;
+      --border: #202a4a;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[var(--bg)] text-[var(--fg)] p-5">
+  <header class="w-full flex items-center justify-between gap-4 border-b border-[var(--border)] pb-3 mb-4">
+    <h1 class="text-xl font-semibold">Admin Dashboard</h1>
+    <nav class="flex items-center gap-3">
+      <a href="/" class="text-sm text-[var(--muted)] hover:text-[var(--fg)]">Back to App</a>
+      <button id="logoutBtn" class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 rounded">Logout</button>
+    </nav>
+  </header>
+
+  <main class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <section class="col-span-1 bg-[var(--card)] rounded p-4 border border-[var(--border)]">
+      <h2 class="text-lg font-medium mb-2">Me</h2>
+      <div id="meBox" class="text-sm text-[var(--muted)]">Loading…</div>
+    </section>
+
+    <section class="col-span-2 bg-[var(--card)] rounded p-4 border border-[var(--border)]">
+      <h2 class="text-lg font-medium mb-2">Online Users</h2>
+      <div id="onlineBox" class="text-sm overflow-auto"></div>
+    </section>
+
+    <section class="col-span-1 bg-[var(--card)] rounded p-4 border border-[var(--border)]">
+      <h2 class="text-lg font-medium mb-2">Users</h2>
+      <div id="usersBox" class="text-sm overflow-auto"></div>
+    </section>
+
+    <section class="col-span-1 bg-[var(--card)] rounded p-4 border border-[var(--border)]">
+      <h2 class="text-lg font-medium mb-2">Rooms</h2>
+      <div id="roomsBox" class="text-sm overflow-auto"></div>
+    </section>
+
+    <section class="col-span-1 lg:col-span-3 bg-[var(--card)] rounded p-4 border border-[var(--border)]">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-medium mb-2">Recent Messages</h2>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-[var(--muted)]">Room code:</label>
+          <input id="roomFilter" class="px-2 py-1 rounded bg-[var(--bg)] border border-[var(--border)] text-sm" placeholder="optional" />
+          <button id="reloadMsgs" class="px-3 py-1.5 text-sm bg-[var(--accent)] hover:brightness-110 rounded">Reload</button>
+        </div>
+      </div>
+      <div id="messagesBox" class="text-sm overflow-auto"></div>
+    </section>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

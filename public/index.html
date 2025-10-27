@@ -17,7 +17,7 @@
     /* Touch-friendly targets */
     button, [role="button"], .touch-target { min-height: 48px; min-width: 48px; }
      /* Fluid container width */
-     #appShell { width: 100%; max-width: min(92vw, 80rem); }
+     #appShell { width: 100%; }
      /* Bottom nav safe-area support */
      #bottomNav { padding-bottom: env(safe-area-inset-bottom); }
      /* Input box sizing, readability and overflow removal */
@@ -139,9 +139,9 @@
   </style>
 
 </head>
-<body class="bg-gray-50 min-h-screen flex items-center justify-center p-8">
+<body class="bg-gray-50 min-h-screen p-5">
   <!-- Auth Gate (visible when logged out) -->
-  <section id="authGate" class="w-full max-w-xl mx-auto text-center space-y-6">
+  <section id="authGate" class="w-full text-center space-y-6">
     <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-8">
       <div class="flex items-center justify-center gap-2 mb-2 text-slate-800">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-7 h-7 text-slate-800"><path d="M3 6a3 3 0 013-3h12a3 3 0 013 3v8a3 3 0 01-3 3H9.5l-3.2 2.4a1 1 0 01-1.6-.8V17H6a3 3 0 01-3-3V6z"/></svg>
@@ -156,7 +156,7 @@
   </section>
 
   <!-- App Shell (hidden until authenticated) -->
-  <div id="appShell" class="w-full max-w-6xl bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hidden">
+  <div id="appShell" class="w-full bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hidden">
     <!-- Brand header with logo -->
     <header class="px-6 py-5 bg-white border-b border-gray-200 text-slate-800">
       <div class="flex items-center justify-between">
@@ -164,20 +164,27 @@
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6 text-slate-800"><path d="M3 6a3 3 0 013-3h12a3 3 0 013 3v8a3 3 0 01-3 3H9.5l-3.2 2.4a1 1 0 01-1.6-.8V17H6a3 3 0 01-3-3V6z"/></svg>
           <h1 class="text-lg font-semibold">Maddy Chat'z</h1>
         </div>
-        <button id="navToggle" class="md:hidden px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700" aria-label="Toggle navigation">☰</button>
+        <div class="flex items-center gap-4">
+          <!-- User icon with name below -->
+          <div class="flex flex-col items-center">
+            <!-- Person Icon -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-7 h-7 text-slate-800"><path d="M12 12a5 5 0 100-10 5 5 0 000 10zm0 2c-5.33 0-8 2.67-8 6v2h16v-2c0-3.33-2.67-6-8-6z"/></svg>
+            <span id="nameDisplay" class="text-sm text-slate-600">Anonymous</span>
+          </div>
+          <a id="adminLink" href="/admin" class="px-3 py-2 rounded bg-slate-800 hover:bg-slate-700 text-white text-sm hidden">Admin</a>
+          <button id="logoutBtn" class="px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm hidden">Logout</button>
+
+          <!-- Hidden edit controls preserved for script hooks -->
+          <div id="nameEditWrap" class="hidden items-center gap-2">
+            <input id="nameInput" type="text" placeholder="Your name" class="px-3 py-1 border border-gray-300 rounded bg-white text-slate-900" />
+            <button id="setNameBtn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Save</button>
+          </div>
+          <button id="editNameBtn" class="hidden px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700">Edit</button>
+        </div>
       </div>
     </header>
 
-    <!-- Collapsible nav/control bar (hamburger on mobile, visible on md+) -->
-    <div id="mobileNav" class="hidden md:flex px-6 py-3 border-b border-gray-200 bg-white items-center gap-3 flex-wrap">
-      <span id="nameDisplay" class="text-sm text-slate-600">You: Anonymous</span>
-      <button id="editNameBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm">Edit</button>
-      <div id="nameEditWrap" class="hidden items-center gap-2">
-        <input id="nameInput" type="text" placeholder="Your name" class="px-3 py-1 border border-gray-300 rounded bg-white text-slate-900" />
-        <button id="setNameBtn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Save</button>
-      </div>
-      <button id="logoutBtn" class="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50 text-slate-700 text-sm hidden">Logout</button>
-    </div>
+    <!-- Previous collapsible nav removed; header now contains user icon, name, and logout -->
 
     <!-- Main content area with sidebar -->
      <div class="grid grid-cols-1 md:grid-cols-[20rem,1fr] min-h-[60vh]">

@@ -15,10 +15,12 @@ model User {
   passwordHash String
   name         String
   createdAt    DateTime  @default(now())
+  isAdmin      Boolean   @default(false)
 
   rooms        Room[]    @relation("RoomOwner")
   memberships  Membership[]
   messages     Message[]
+  auditLogs    AuditLog[]
 }
 
 model Room {
@@ -30,6 +32,7 @@ model Room {
 
   memberships Membership[]
   messages     Message[]
+  auditLogs    AuditLog[]
 }
 
 model Membership {
@@ -63,4 +66,20 @@ model Message {
   user User @relation(fields: [userId], references: [id])
 
   @@index([roomId, createdAt])
-}
+}
+
+// Audit logs for admin dashboard
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  userId    Int?
+  action    String   // e.g., 'login', 'logout', 'message_sent', 'message_deleted', 'room_cleared', 'upload'
+  ip        String?
+  roomId    Int?
+  meta      String?  // JSON string for additional details
+
+  user User? @relation(fields: [userId], references: [id])
+  room Room? @relation(fields: [roomId], references: [id])
+
+  @@index([createdAt])
+}

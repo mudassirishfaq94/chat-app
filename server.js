@@ -23,6 +23,47 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-prod';
 
 const prisma = new PrismaClient();
 
+// Bootstrap an admin user from environment variables (non-destructive)
+// Set ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME (optional), and ADMIN_FORCE_RESET=true to reset password
+async function bootstrapAdmin() {
+  try {
+    const email = process.env.ADMIN_EMAIL;
+    const password = process.env.ADMIN_PASSWORD;
+    const name = process.env.ADMIN_NAME || 'Admin';
+    const forceReset = String(process.env.ADMIN_FORCE_RESET || '').toLowerCase() === 'true';
+
+    if (!email || !password) {
+      console.log('[admin] bootstrap skipped: ADMIN_EMAIL or ADMIN_PASSWORD not set');
+      return;
+    }
+
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      const passwordHash = await bcrypt.hash(password, 10);
+      user = await prisma.user.create({
+        data: { name, email, passwordHash, isAdmin: true },
+      });
+      console.log(`[admin] created admin user: ${email}`);
+      return;
+    }
+
+    const updates = {};
+    if (!user.isAdmin) updates.isAdmin = true;
+    if (name && user.name !== name) updates.name = name;
+    if (forceReset) {
+      updates.passwordHash = await bcrypt.hash(password, 10);
+    }
+    if (Object.keys(updates).length > 0) {
+      await prisma.user.update({ where: { id: user.id }, data: updates });
+      console.log(`[admin] updated admin user: ${email}${forceReset ? ' (password reset)' : ''}`);
+    } else {
+      console.log(`[admin] admin user already exists: ${email}`);
+    }
+  } catch (e) {
+    console.error('[admin] bootstrap error:', e);
+  }
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
@@ -91,7 +132,7 @@ app.get('/api/me', async (req, res) => {
     const payload = jwt.verify(token, JWT_SECRET);
     const user = await prisma.user.findUnique({ where: { id: payload.uid } });
     if (!user) return res.status(401).json({ error: 'Unauthenticated' });
-    res.json({ user: { id: user.id, name: user.name, email: user.email } });
+    res.json({ user: { id: user.id, name: user.name, email: user.email, isAdmin: user.isAdmin } });
   } catch (err) {
     res.status(401).json({ error: 'Unauthenticated' });
   }
@@ -107,6 +148,16 @@ function requireAuth(req, res, next) {
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Unauthenticated' });
+  }
+}
+
+async function requireAdmin(req, res, next) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user || !user.isAdmin) return res.status(403).json({ error: 'Forbidden' });
+    next();
+  } catch (e) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
 }
 
@@ -168,6 +219,84 @@ app.post('/api/upload', requireAuth, upload.array('files', 8), async (req, res) 
     console.error('Upload handler error:', e);
     res.status(500).json({ error: 'Upload failed' });
   }
+});
+
+// Admin APIs
+app.get('/api/admin/online', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const list = Array.from(onlineUsers.entries()).map(([userId, v]) => ({
+      userId,
+      name: v.name,
+      lastSeen: v.lastSeen,
+      roomCode: v.roomCode,
+      socketId: v.socketId,
+    }));
+    res.json({ online: list });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: { id: true, name: true, email: true, isAdmin: true, createdAt: true },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ users });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/rooms', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const rooms = await prisma.room.findMany({
+      select: { id: true, code: true, ownerId: true, createdAt: true },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ rooms });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/messages', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const roomCode = req.query.roomCode || null;
+    const take = Math.min(Number(req.query.limit) || 100, 500);
+    let roomFilter = {};
+    if (roomCode) {
+      const room = await prisma.room.findUnique({ where: { code: roomCode } });
+      if (room) roomFilter = { roomId: room.id };
+    }
+    const messages = await prisma.message.findMany({
+      where: { deletedAt: null, ...roomFilter },
+      orderBy: { createdAt: 'desc' },
+      take,
+      include: { user: true, room: true },
+    });
+    const data = messages.map(m => ({
+      id: m.id,
+      text: m.text,
+      createdAt: m.createdAt,
+      user: { id: m.user.id, name: m.user.name, email: m.user.email },
+      room: { id: m.room.id, code: m.room.code },
+      attachmentUrl: m.attachmentUrl,
+      attachmentType: m.attachmentType,
+      attachmentName: m.attachmentName,
+      attachmentSize: m.attachmentSize,
+      attachmentMime: m.attachmentMime,
+    }));
+    res.json({ messages: data });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Admin dashboard page
+app.get('/admin', requireAuth, requireAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // Socket auth middleware (reads JWT from cookie)
@@ -459,8 +588,12 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+// Start server after best-effort admin bootstrap
+(async () => {
+  await bootstrapAdmin();
+  server.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
+})();
 
 // Load environment variables and initialize Supabase client

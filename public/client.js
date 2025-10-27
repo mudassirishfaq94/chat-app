@@ -16,6 +16,7 @@ const editNameBtn = document.getElementById('editNameBtn');
 const nameEditWrap = document.getElementById('nameEditWrap');
 const systemLogEl = document.getElementById('systemLog');
 const logoutBtn = document.getElementById('logoutBtn');
+const adminLink = document.getElementById('adminLink');
 const clearRoomBtn = document.getElementById('clearRoomBtn');
 let systemLogHideTimer;
 const SYSTEM_SHOW_MS = 6000; // show for ~6s (adjustable)
@@ -89,7 +90,7 @@ function randomRoomId() { return Math.random().toString(36).slice(2, 8); }
 
 function updateNameDisplay(name) {
   const finalName = ((name !== undefined && name !== null) ? name : (nameInputEl.value || '')).trim();
-  nameDisplayEl.textContent = `You: ${finalName || 'Anonymous'}`;
+  nameDisplayEl.textContent = `${finalName || 'Anonymous'}`;
 }
 
 let currentRoom = getRoomFromUrl();
@@ -216,6 +217,7 @@ function setAuthUI(isAuthed) {
   if (signupOpen) signupOpen.classList.toggle('hidden', !!isAuthed);
   if (loginOpen) loginOpen.classList.toggle('hidden', !!isAuthed);
   if (logoutBtn) logoutBtn.classList.toggle('hidden', !isAuthed);
+  if (adminLink && !isAuthed) adminLink.classList.add('hidden');
   if (authGate) authGate.classList.toggle('hidden', !!isAuthed);
   if (appShell) appShell.classList.toggle('hidden', !isAuthed);
 }
@@ -236,6 +238,7 @@ function connectSocket() {
           nameInputEl.value = data.user.name;
           updateNameDisplay(data.user.name);
           setAuthUI(true);
+          if (adminLink) adminLink.classList.toggle('hidden', !data.user.isAdmin);
         }
       } else {
         setAuthUI(false);
@@ -648,6 +651,7 @@ if (logoutBtn) {
       onlineLabel.textContent = '';
       setAuthUI(false);
       updateNameDisplay('Anonymous');
+      if (adminLink) adminLink.classList.add('hidden');
     } catch (e) {
       alert('Logout failed');
     }
