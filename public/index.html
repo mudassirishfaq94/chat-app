@@ -136,6 +136,23 @@
 
       /* Online status dot color alignment */
       .online-dot { background-color: var(--color-success); }
+
+      /* Layout: header and friends list sticky; only chat messages scroll */
+      html, body { height: 100%; }
+      body { overflow: hidden; }
+      #appShell { height: calc(100vh - 2.5rem); /* body has p-5 top+bottom padding (2.5rem total) */ display: flex; flex-direction: column; }
+      #appShell > header { position: sticky; top: 0; z-index: 40; }
+      #contentGrid { flex: 1; height: 100%; }
+      .chat-column { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+      .chat-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+      #messages { flex: 1; overflow-y: auto; }
+      #form { position: sticky; bottom: 0; z-index: 30; background: var(--color-surface); border-top: 1px solid var(--color-border); padding-bottom: env(safe-area-inset-bottom); }
+
+      /* Custom small vertical scrollbar for chat messages */
+      #messages { scrollbar-width: thin; scrollbar-color: #94a3b8 transparent; }
+      #messages::-webkit-scrollbar { width: 6px; }
+      #messages::-webkit-scrollbar-track { background: transparent; }
+      #messages::-webkit-scrollbar-thumb { background-color: #94a3b8; border-radius: 9999px; }
   </style>
 
 </head>
@@ -187,7 +204,7 @@
     <!-- Previous collapsible nav removed; header now contains user icon, name, and logout -->
 
     <!-- Main content area with sidebar -->
-     <div class="grid grid-cols-1 md:grid-cols-[20rem,1fr] min-h-[60vh]">
+     <div id="contentGrid" class="grid grid-cols-1 md:grid-cols-[20rem,1fr] min-h-[60vh]">
       <!-- Friends Sidebar -->
        <div class="hidden md:flex md:w-80 bg-gray-50 border-r border-gray-200 flex-col">
          <div class="px-4 py-3 border-b border-gray-200 bg-white">
@@ -199,7 +216,7 @@
        </div>
 
       <!-- Chat Area -->
-      <div class="flex-1 flex flex-col">
+      <div class="flex-1 flex flex-col chat-column">
 
     <!-- Info bar -->
     <div class="px-3 sm:px-6 py-3 flex items-center justify-between border-b border-gray-200 text-slate-600">
@@ -242,7 +259,7 @@
     </div>
 
     <!-- Main chat -->
-    <main class="p-6 space-y-3">
+    <main class="p-6 space-y-3 chat-main">
       <!-- System messages appear separately from chat; fades and auto-hide -->
       <div id="systemLog" class="text-slate-500 text-xs bg-slate-50 border border-gray-200 rounded p-2 space-y-1 hidden opacity-0 transition-opacity duration-500"></div>
       <ul id="messages" class="flex-1 min-h-[40vh] overflow-y-auto bg-white border border-gray-200 rounded p-4 space-y-3"></ul>
@@ -250,6 +267,7 @@
       <form id="form" class="flex gap-2 sm:gap-3">
         <button id="attachBtn" type="button" class="bg-slate-100 text-slate-700 border border-gray-300 px-3 py-2 rounded hover:bg-slate-200" title="Add attachments">📎</button>
         <input id="fileInput" type="file" class="hidden" multiple accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" />
+        <button id="voiceBtn" type="button" class="bg-slate-100 text-slate-700 border border-gray-300 px-3 py-2 rounded hover:bg-slate-200 transition-colors" title="Record voice message">🎤</button>
         <textarea id="input" rows="1" autocomplete="off" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" class="flex-1 border border-gray-300 bg-white text-slate-900 rounded px-3 py-2 placeholder-slate-400"></textarea>
         <button class="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded hover:bg-slate-700">Send</button>
       </form>

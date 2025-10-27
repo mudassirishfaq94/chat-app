@@ -387,16 +387,19 @@ io.on('connection', (socket) => {
     // Send recent chat history (last 100 messages) for this room
     try {
       const history = await prisma.message.findMany({
-        where: { roomId: room.id, deletedAt: null },
+        where: { roomId: room.id },
         orderBy: { createdAt: 'asc' },
         take: 100,
         include: { user: true },
       });
       socket.emit('history', history.map((m) => ({
         id: m.id,
+        userId: m.userId,
         from: m.user.name,
         text: m.text,
         ts: new Date(m.createdAt).getTime(),
+        deletedAt: m.deletedAt ? new Date(m.deletedAt).getTime() : null,
+        editedAt: m.editedAt ? new Date(m.editedAt).getTime() : null,
         attachmentUrl: m.attachmentUrl || null,
         attachmentType: m.attachmentType || null,
         attachmentName: m.attachmentName || null,
@@ -426,6 +429,7 @@ io.on('connection', (socket) => {
       });
       const msg = {
         id: created.id,
+        userId: socket.data.user.id,
         from: socket.data.name,
         text: msgText,
         ts: new Date(created.createdAt).getTime(),
@@ -494,16 +498,62 @@ io.on('connection', (socket) => {
   });
 
   // Delete your own message
-  socket.on('delete-message', async (messageId) => {
+  socket.on('delete-message', async (messageId, ack) => {
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) { if (ack) ack({ ok: false, error: 'Not in a room' }); return; }
+    try {
+      console.log('[server] delete-message received', {
+        messageId,
+        userId: socket.data.user?.id,
+        isAdmin: !!(socket.data.user && socket.data.user.isAdmin),
+        roomCode
+      });
+      const msg = await prisma.message.findUnique({ where: { id: Number(messageId) } });
+      const isOwner = msg && msg.userId === socket.data.user.id;
+      const isAdmin = socket.data.user && socket.data.user.isAdmin;
+      if (!msg) {
+        console.log('[server] delete-message failed: message not found', { messageId });
+        if (ack) ack({ ok: false, error: 'Message not found' });
+        return;
+      }
+      if (!isOwner && !isAdmin) {
+        console.log('[server] delete-message failed: not authorized', { messageId, userId: socket.data.user?.id });
+        if (ack) ack({ ok: false, error: 'Not authorized to delete this message' });
+        return;
+      }
+      await prisma.message.update({ where: { id: msg.id }, data: { deletedAt: new Date() } });
+      console.log('[server] delete-message success, broadcasting message-deleted', { id: msg.id, roomCode });
+      if (ack) ack({ ok: true, id: msg.id });
+      io.to(roomCode).emit('message-deleted', msg.id);
+    } catch (e) {
+      console.error('Delete message error', e);
+      if (ack) ack({ ok: false, error: 'Failed to delete message' });
+    }
+  });
+
+  // Edit your own message (within 15 minutes)
+  socket.on('edit-message', async ({ messageId, newText }, ack) => {
     const roomCode = socket.data.roomCode;
     if (!roomCode) return;
     try {
       const msg = await prisma.message.findUnique({ where: { id: Number(messageId) } });
-      if (!msg || msg.userId !== socket.data.user.id) return; // only owner can delete
-      await prisma.message.update({ where: { id: msg.id }, data: { deletedAt: new Date() } });
-      io.to(roomCode).emit('message-deleted', msg.id);
+      if (!msg) return;
+      const isOwner = msg.userId === socket.data.user.id;
+      const isAdmin = socket.data.user && socket.data.user.isAdmin;
+      if (!isOwner && !isAdmin) return;
+      if (msg.deletedAt) return; // cannot edit deleted
+      // WhatsApp-like edit window: 15 minutes
+      const EDIT_WINDOW_MS = 15 * 60 * 1000;
+      const withinWindow = (Date.now() - new Date(msg.createdAt).getTime()) <= EDIT_WINDOW_MS;
+      if (!isAdmin && !withinWindow) return;
+      const cleanText = String(newText || '').trim();
+      if (!cleanText) return;
+      const updated = await prisma.message.update({ where: { id: msg.id }, data: { text: cleanText, editedAt: new Date() } });
+      if (ack) ack({ ok: true, id: updated.id, text: updated.text, editedAt: new Date(updated.editedAt).getTime() });
+      io.to(roomCode).emit('message-edited', { id: updated.id, text: updated.text, editedAt: new Date(updated.editedAt).getTime() });
     } catch (e) {
-      console.error('Delete message error', e);
+      console.error('Edit message error', e);
+      if (ack) ack({ ok: false, error: 'Failed to edit message' });
     }
   });
 
@@ -549,6 +599,28 @@ io.on('connection', (socket) => {
       }
     } catch (e) {
       console.error('Message seen error', e);
+    }
+  });
+
+  // Message delivered receipt (recipient's client received the message)
+  socket.on('message-delivered', async (messageId) => {
+    const roomCode = socket.data.roomCode;
+    if (!roomCode) return;
+    try {
+      const message = await prisma.message.findUnique({ where: { id: Number(messageId) } });
+      if (!message) return;
+      // Notify the original sender that their message has been delivered
+      const senderSocket = Array.from(io.sockets.sockets.values())
+        .find(s => s.data.user && s.data.user.id === message.userId);
+      if (senderSocket) {
+        senderSocket.emit('message-delivered', {
+          messageId: message.id,
+          deliveredBy: socket.data.name,
+          deliveredAt: new Date()
+        });
+      }
+    } catch (e) {
+      console.error('Message delivered error', e);
     }
   });
 

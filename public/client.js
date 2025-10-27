@@ -3,6 +3,7 @@ const formEl = document.getElementById('form');
 const inputEl = document.getElementById('input');
 const attachBtn = document.getElementById('attachBtn');
 const fileInput = document.getElementById('fileInput');
+const voiceBtn = document.getElementById('voiceBtn');
 const nameInputEl = document.getElementById('nameInput');
 const setNameBtn = document.getElementById('setNameBtn');
 const copyLinkBtn = document.getElementById('copyLinkBtn');
@@ -74,6 +75,8 @@ function renderTyping() {
 }
 
 let socket;
+let currentUserId = null;
+let currentUserIsAdmin = false;
 
 function show(el) { el.classList.remove('hidden'); }
 function hide(el) { el.classList.add('hidden'); }
@@ -121,7 +124,29 @@ function addSystem(text) {
   showSystemLog();
 }
 
-function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = false, self = false, attachmentUrl = null, attachmentType = null, attachmentName = null, attachmentSize = null, attachmentMime = null }) {
+// Track which received messages we've emitted 'seen' for (to avoid duplicates)
+const seenEmitted = new Set();
+
+function renderStatusTicks(status, isSelfBubble) {
+  // status: 'sent' | 'delivered' | 'seen'
+  // Color rules:
+  // - On blue (self) and in dark mode: use white for maximum contrast
+  // - On light (white/gray) backgrounds: use black; for 'seen' we try blue, but ensure contrast
+  const isDark = document.documentElement.classList.contains('dark');
+  const baseClass = isSelfBubble ? 'text-white' : (isDark ? 'text-white' : 'text-black');
+  const seenClass = isSelfBubble || isDark ? 'text-white' : 'text-blue-600';
+  const colorClass = status === 'seen' ? seenClass : baseClass;
+  // SVG uses currentColor for fill to inherit chosen class color
+  const singleTick = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="currentColor"><path d="M9 16.17l-3.88-3.88a1 1 0 10-1.41 1.41l4.59 4.59a1 1 0 001.41 0l9.59-9.59a1 1 0 10-1.41-1.41L9 16.17z"/></svg>';
+  const doubleTick = '<span class="inline-flex items-center gap-[1px]">'
+    + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="currentColor"><path d="M7.5 16.5l-3.88-3.88a1 1 0 10-1.41 1.41l4.59 4.59a1 1 0 001.41 0l5.34-5.34a1 1 0 10-1.41-1.41L7.5 16.5z"/></svg>'
+    + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-3.5 h-3.5 -ml-1" fill="currentColor"><path d="M12 16.17l-3.88-3.88a1 1 0 10-1.41 1.41l4.59 4.59a1 1 0 001.41 0l9.59-9.59a1 1 0 10-1.41-1.41L12 16.17z"/></svg>'
+    + '</span>';
+  const icon = status === 'sent' ? singleTick : doubleTick;
+  return `<div class="message-status ${colorClass} text-xs opacity-70 ml-2" data-status="${status}">${icon}</div>`;
+}
+
+function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = false, self = false, attachmentUrl = null, attachmentType = null, attachmentName = null, attachmentSize = null, attachmentMime = null, deletedAt = null, editedAt = null }) {
   const li = document.createElement('li');
   if (id) li.setAttribute('data-id', id);
   li.dataset.messageId = id;
@@ -142,12 +167,68 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
     const bubble = document.createElement('div');
     bubble.className = `max-w-xs lg:max-w-md px-4 py-2 ${bubbleClass} shadow-sm`;
     
-    if (attachmentUrl) {
+    const isDeleted = !!deletedAt;
+    const isEdited = !!editedAt;
+
+    // Helper: icons
+    const iconBtn = (svg, title) => {
+      const btn = document.createElement('button');
+      // No background behind the icon; keep accessibility ring only
+      btn.className = 'p-1 rounded bg-transparent focus:outline-none focus:ring-2 focus:ring-black/20';
+      btn.style.backgroundColor = 'transparent';
+      btn.setAttribute('title', title);
+      btn.innerHTML = svg;
+      return btn;
+    };
+
+    const trashSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M9 3a1 1 0 00-1 1v1H5a1 1 0 100 2h14a1 1 0 100-2h-3V4a1 1 0 00-1-1H9zm1 6a1 1 0 012 0v8a1 1 0 11-2 0V9zm4 0a1 1 0 012 0v8a1 1 0 11-2 0V9z"/></svg>';
+    const editSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+
+    if (isDeleted) {
+      const deletedText = self ? 'You deleted this message' : 'This message was deleted';
+      bubble.innerHTML = `
+        <div class="text-sm italic opacity-80 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm5 11H7a1 1 0 110-2h10a1 1 0 110 2z"/></svg>
+          ${escapeHtml(deletedText)}
+        </div>
+        <div class="flex items-center justify-between mt-1">
+          <div class="text-xs opacity-70">${time}</div>
+        </div>
+      `;
+    } else if (attachmentUrl) {
+      // Make attachment bubbles transparent and edge-to-edge
+      bubble.className = 'max-w-[min(90vw,700px)] p-0 bg-transparent shadow-none';
       let preview = '';
       if (attachmentType === 'image') {
-        preview = `<img src="${attachmentUrl}" alt="${escapeHtml(attachmentName || 'image')}" class="rounded max-w-[min(70vw,480px)] object-contain" />`;
+        preview = `<img src="${attachmentUrl}" alt="${escapeHtml(attachmentName || 'image')}" class="block w-full h-auto max-w-[min(90vw,700px)] rounded-lg object-contain" />`;
       } else if (attachmentType === 'video') {
-        preview = `<video src="${attachmentUrl}" controls class="rounded w-full max-w-[min(70vw,480px)]"></video>`;
+        preview = `<video src="${attachmentUrl}" controls class="rounded w-full max-w-[min(90vw,700px)]"></video>`;
+      } else if (attachmentMime && attachmentMime.startsWith('audio/')) {
+        // Voice message: minimal, responsive player (no background)
+        const duration = '0:00';
+        preview = `
+          <div class="voice-message flex items-center gap-3 p-2 min-w-[180px] max-w-[min(85vw,420px)]">
+            <button class="voice-play-btn w-9 h-9 rounded-full border border-white/30 flex items-center justify-center hover:bg-white/10 transition-colors" data-audio-url="${attachmentUrl}">
+              <svg class="play-icon w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+              <svg class="pause-icon w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              </svg>
+            </button>
+            <div class="flex-1">
+              <div class="voice-waveform h-6 rounded-full relative overflow-hidden">
+                <div class="voice-progress h-full bg-white/50 rounded-full transition-all duration-100" style="width: 0%"></div>
+                <div class="absolute inset-0 flex items-center justify-center">
+                  <div class="flex gap-1">
+                    ${Array.from({length: 20}, () => `<div class=\"w-1 bg-white/60 rounded-full\" style=\"height: ${Math.random() * 18 + 6}px\"></div>`).join('')}
+                  </div>
+                </div>
+              </div>
+              <div class="text-xs opacity-70 mt-1">🎤 Voice message • ${duration}</div>
+            </div>
+          </div>
+        `;
       } else {
         const sizeStr = attachmentSize ? ` (${Math.round(attachmentSize/1024)} KB)` : '';
         preview = `<a href="${attachmentUrl}" target="_blank" class="underline">${escapeHtml(attachmentName || 'file')}${sizeStr}</a>`;
@@ -155,47 +236,188 @@ function addMessage({ id, from = 'system', text = '', ts = Date.now(), system = 
       bubble.innerHTML = `
         <div class="space-y-2">
           ${preview}
-          ${text ? `<div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(text)}</div>` : ''}
-          <div class="flex items-center justify-between mt-1">
+          ${text ? `<div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(text)}${isEdited ? ' <span class="text-xs opacity-70">(edited)</span>' : ''}</div>` : ''}
+          <div class="flex items-center justify-between mt-1 px-2">
             <div class="text-xs opacity-70">${time}</div>
-            ${self ? '<div class="message-status text-xs opacity-70 ml-2">Sent</div>' : ''}
+            ${self ? renderStatusTicks('sent', true) : ''}
           </div>
         </div>
       `;
     } else {
       bubble.innerHTML = `
-        <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(text)}</div>
+        <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(text)}${isEdited ? ' <span class="text-xs opacity-70">(edited)</span>' : ''}</div>
         <div class="flex items-center justify-between mt-1">
           <div class="text-xs opacity-70">${time}</div>
-          ${self ? '<div class="message-status text-xs opacity-70 ml-2">Sent</div>' : ''}
+          ${self ? renderStatusTicks('sent', true) : ''}
         </div>
       `;
     }
     
-    if (self && socket) {
-      const del = document.createElement('button');
-      del.textContent = 'Delete';
-      del.className = 'ml-2 text-xs text-red-600 hover:underline';
-      del.onclick = () => {
-        if (!id) return;
-        if (!confirm('Delete this message?')) return;
-        socket.emit('delete-message', id);
-      };
+    if ((self || currentUserIsAdmin) && socket && !isDeleted) {
       const wrap = document.createElement('div');
-      wrap.className = 'flex items-start';
+      wrap.className = 'flex items-start gap-2';
+      wrap.style.position = 'relative';
       wrap.appendChild(bubble);
-      wrap.appendChild(del);
+
+      // WhatsApp-like: kebab button shows on hover; click opens popup menu
+      const kebabSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+      const kebabBtn = iconBtn(kebabSvg, 'Options');
+      const anchor = document.createElement('div');
+      anchor.setAttribute('data-message-actions', 'true');
+      anchor.style.position = 'absolute';
+      anchor.style.right = '-8px';
+      anchor.style.top = '-8px';
+      anchor.style.opacity = '0';
+      anchor.style.transition = 'opacity 120ms ease';
+      anchor.appendChild(kebabBtn);
+      wrap.appendChild(anchor);
       li.appendChild(wrap);
+
+      const showAnchor = () => { anchor.style.opacity = '1'; };
+      const hideAnchor = () => { anchor.style.opacity = '0'; };
+      wrap.addEventListener('mouseenter', showAnchor);
+      wrap.addEventListener('mouseleave', hideAnchor);
+      bubble.setAttribute('tabindex', '0');
+      bubble.addEventListener('focus', showAnchor);
+      bubble.addEventListener('blur', hideAnchor);
+      bubble.addEventListener('click', () => { anchor.style.opacity = anchor.style.opacity === '1' ? '0' : '1'; });
+
+      // Popup menu
+      const menu = document.createElement('div');
+      menu.className = 'text-sm';
+      menu.style.position = 'absolute';
+      menu.style.right = '0';
+      menu.style.top = '18px';
+      menu.style.background = '#ffffff';
+      menu.style.color = '#0f172a';
+      menu.style.border = '1px solid #e5e7eb';
+      menu.style.borderRadius = '8px';
+      menu.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)';
+      menu.style.zIndex = '50';
+      menu.style.minWidth = '160px';
+      menu.style.display = 'none';
+      menu.innerHTML = `
+        <button class="w-full text-left px-3 py-2 hover:bg-gray-100">Edit message</button>
+        <button class="w-full text-left px-3 py-2 hover:bg-gray-100">Delete message</button>
+      `;
+      anchor.appendChild(menu);
+
+      const toggleMenu = (visible) => { menu.style.display = visible ? 'block' : 'none'; };
+      kebabBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(menu.style.display !== 'block'); });
+      document.addEventListener('click', (e) => { if (!menu.contains(e.target) && e.target !== kebabBtn) toggleMenu(false); });
+
+      const [editBtn, deleteBtn] = menu.querySelectorAll('button');
+
+      // Edit flow
+      editBtn.addEventListener('click', () => {
+        toggleMenu(false);
+        if (attachmentUrl) return; // skip editing attachments
+        const currentText = text || '';
+        const editor = document.createElement('div');
+        editor.className = 'mt-2 flex items-center gap-2';
+        editor.style.background = '#ffffff';
+        editor.style.border = '1px solid #e5e7eb';
+        editor.style.borderRadius = '8px';
+        editor.style.padding = '8px';
+        editor.innerHTML = `
+          <input type="text" class="flex-1 border rounded px-2 py-1 text-sm" value="${escapeHtml(currentText)}" />
+          <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded">Save</button>
+          <button class="px-2 py-1 text-sm bg-gray-300 text-gray-900 rounded">Cancel</button>
+        `;
+        const input = editor.querySelector('input');
+        const saveBtn = editor.querySelector('button:nth-of-type(1)');
+        const cancelBtn = editor.querySelector('button:nth-of-type(2)');
+        bubble.parentElement.insertBefore(editor, bubble.nextSibling);
+        input.focus();
+        const cleanup = () => editor.remove();
+        cancelBtn.addEventListener('click', cleanup);
+        saveBtn.addEventListener('click', () => {
+          const newText = input.value.trim();
+          if (!newText || newText === currentText) { cleanup(); return; }
+          if (socket && id) {
+            saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
+            socket.emit('edit-message', { messageId: id, newText }, (res) => {
+              saveBtn.disabled = false; saveBtn.textContent = 'Save';
+              if (res && res.ok) {
+                // Update UI immediately
+                const textEl = bubble.querySelector('.text-sm.break-words.whitespace-pre-wrap');
+                if (textEl) {
+                  textEl.innerHTML = `${escapeHtml(res.text)} <span class="text-xs opacity-70">(edited)</span>`;
+                } else {
+                  // Fallback: rebuild bubble content for text-only
+                  bubble.innerHTML = `
+                    <div class="text-sm break-words whitespace-pre-wrap">${escapeHtml(res.text)} <span class="text-xs opacity-70">(edited)</span></div>
+                    <div class="flex items-center justify-between mt-1">
+                      <div class="text-xs opacity-70">${new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      ${self ? '<div class="message-status text-xs opacity-70 ml-2">Sent</div>' : ''}
+                    </div>
+                  `;
+                }
+                cleanup();
+              } else {
+                addSystem('Edit failed' + (res && res.error ? ': ' + res.error : ''));
+              }
+            });
+          } else {
+            cleanup();
+          }
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') saveBtn.click();
+          if (e.key === 'Escape') cancelBtn.click();
+        });
+      });
+
+      // Delete flow: immediate action on menu click (no second confirm)
+      deleteBtn.addEventListener('click', () => {
+        console.log('[Delete] Menu clicked for message id=', id);
+        toggleMenu(false);
+        if (!id) return;
+        if (!socket) { addSystem('Please log in first'); return; }
+        // Quick visual state to show progress
+        const status = bubble.querySelector('.message-status');
+        if (status) { status.innerHTML = '<span class="text-xs">Deleting…</span>'; status.style.opacity = '0.7'; }
+        let acked = false;
+        const timeout = setTimeout(() => {
+          if (!acked) {
+            console.log('[Delete] No ack received within timeout for id=', id);
+            addSystem('Delete failed: no response from server');
+            if (status) { status.outerHTML = renderStatusTicks('sent', true); }
+          }
+        }, 6000);
+        console.log('[Delete] Emitting delete-message for id=', id);
+        socket.emit('delete-message', id, (res) => {
+          acked = true; clearTimeout(timeout);
+          console.log('[Delete] Ack received for id=', id, 'res=', res);
+          if (res && res.ok) {
+            // Update UI immediately to deleted placeholder
+            const bubbleEl = wrap.querySelector('.max-w-xs') || wrap.querySelector('.lg\\:max-w-md') || wrap.querySelector('div[class*="max-w-"]') || bubble;
+            const timeEl = bubbleEl?.querySelector('.text-xs.opacity-70');
+            const timeText = timeEl ? timeEl.textContent : '';
+            bubbleEl.innerHTML = `
+              <div class="text-sm italic opacity-80 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm5 11H7a1 1 0 110-2h10a1 1 0 110 2z"/></svg>
+                ${escapeHtml(self ? 'You deleted this message' : 'This message was deleted')}
+              </div>
+              <div class="flex items-center justify-between mt-1">
+                <div class="text-xs opacity-70">${timeText || ''}</div>
+              </div>
+            `;
+            // Remove kebab menu
+            anchor.remove();
+            addSystem('Message deleted');
+          } else {
+            console.log('[Delete] Delete failed for id=', id, 'error=', res && res.error);
+            addSystem('Delete failed' + (res && res.error ? ': ' + res.error : ''));
+            if (status) { status.outerHTML = renderStatusTicks('sent', true); }
+          }
+        });
+      });
     } else {
       li.appendChild(bubble);
     }
     
-    // Mark message as seen if it's not from current user
-    if (!self && id) {
-      setTimeout(() => {
-        if (socket) socket.emit('message-seen', id);
-      }, 1000);
-    }
+    // Do NOT auto-send seen; we will send seen only when the user starts typing a reply
     
     // Show notification for new messages
     if (!self && !isWindowFocused) {
@@ -227,7 +449,6 @@ function connectSocket() {
 
   socket.on('connect', async () => {
     updateRoomLabels();
-    socket.emit('join-room', { roomId: currentRoom });
     addSystem('Connected to server');
     if (invitedBy) addSystem(`You were invited by ${invitedBy}`);
     try {
@@ -237,6 +458,8 @@ function connectSocket() {
         if (data && data.user && data.user.name) {
           nameInputEl.value = data.user.name;
           updateNameDisplay(data.user.name);
+          currentUserId = data.user.id || null;
+          currentUserIsAdmin = !!data.user.isAdmin;
           setAuthUI(true);
           if (adminLink) adminLink.classList.toggle('hidden', !data.user.isAdmin);
         }
@@ -246,6 +469,8 @@ function connectSocket() {
     } catch {
       setAuthUI(false);
     }
+    // Join room AFTER user info is loaded, so history alignment computes correctly
+    socket.emit('join-room', { roomId: currentRoom });
   });
 
   socket.on('connect_error', (err) => {
@@ -262,24 +487,91 @@ function connectSocket() {
   socket.on('typing', ({ from, isTyping }) => {
     if (isTyping) typingUsers.add(from); else typingUsers.delete(from);
     renderTyping();
+    // When the OTHER person starts typing, mark our last sent message as 'seen'
+    try {
+      const myName = (nameInputEl.value || '').trim();
+      if (isTyping && from && from !== myName) {
+        // Find the last self bubble (blue background) and update status to seen
+        const selfBubbles = messagesEl.querySelectorAll('.bg-blue-500');
+        const lastSelfBubble = selfBubbles[selfBubbles.length - 1];
+        if (lastSelfBubble) {
+          const statusEl = lastSelfBubble.querySelector('.message-status');
+          if (statusEl) {
+            statusEl.outerHTML = renderStatusTicks('seen', true);
+          }
+        }
+      }
+    } catch {}
   });
 
   socket.on('message', (msg) => {
-    const self = msg.from === (nameInputEl.value.trim() || '');
+    const self = (msg.userId && currentUserId) ? (msg.userId === currentUserId) : (msg.from === (nameInputEl.value.trim() || ''));
     addMessage({ ...msg, self });
+    // Recipient acknowledges delivery immediately upon receiving
+    try {
+      if (!self && msg.id) {
+        socket.emit('message-delivered', msg.id);
+      }
+    } catch {}
   });
 
   socket.on('history', (msgs) => {
     if (!Array.isArray(msgs)) return;
     msgs.forEach((msg) => {
-      const self = msg.from === (nameInputEl.value.trim() || '');
+      const self = (msg.userId && currentUserId) ? (msg.userId === currentUserId) : (msg.from === (nameInputEl.value.trim() || ''));
       addMessage({ ...msg, self });
     });
   });
 
   socket.on('message-deleted', (msgId) => {
+    console.log('[Delete] message-deleted event received for id=', msgId);
     const li = messagesEl.querySelector(`li[data-id="${msgId}"]`);
-    if (li) li.remove();
+    if (!li) return;
+    // Replace bubble content with deleted placeholder
+    const bubble = li.querySelector('.max-w-xs') || li.querySelector('.lg\\:max-w-md') || li.querySelector('div[class*="max-w-"]');
+    if (!bubble) {
+      // Fallback: find direct bubble inside li or its first child
+      const direct = li.querySelector('div');
+      if (direct) {
+        const timeEl = direct.querySelector('.text-xs.opacity-70');
+        const timeText = timeEl ? timeEl.textContent : '';
+        direct.innerHTML = `
+          <div class="text-sm italic opacity-80 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm5 11H7a1 1 0 110-2h10a1 1 0 110 2z"/></svg>
+            This message was deleted
+          </div>
+          <div class="flex items-center justify-between mt-1">
+            <div class="text-xs opacity-70">${timeText || ''}</div>
+          </div>
+        `;
+      }
+    } else {
+      const timeEl = bubble?.querySelector('.text-xs.opacity-70');
+      const timeText = timeEl ? timeEl.textContent : '';
+      bubble.innerHTML = `
+        <div class="text-sm italic opacity-80 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm5 11H7a1 1 0 110-2h10a1 1 0 110 2z"/></svg>
+          This message was deleted
+        </div>
+        <div class="flex items-center justify-between mt-1">
+          <div class="text-xs opacity-70">${timeText || ''}</div>
+        </div>
+      `;
+    }
+    // Remove actions for deleted message
+    const actionsAnchor = li.querySelector('[data-message-actions="true"]');
+    if (actionsAnchor) actionsAnchor.remove();
+  });
+
+  socket.on('message-edited', (data) => {
+    const li = messagesEl.querySelector(`li[data-id="${data.id}"]`);
+    if (!li) return;
+    const bubble = li.querySelector('.max-w-xs') || li.querySelector('.lg\\:max-w-md') || li.querySelector('div[class*="max-w-"]');
+    if (!bubble) return;
+    const textEl = bubble.querySelector('.text-sm.break-words.whitespace-pre-wrap');
+    if (textEl) {
+      textEl.innerHTML = `${escapeHtml(data.text)} <span class="text-xs opacity-70">(edited)</span>`;
+    }
   });
 
   socket.on('room-cleared', () => {
@@ -299,6 +591,101 @@ formEl.addEventListener('submit', (e) => {
   typingUsers.delete(nameInputEl.value.trim() || 'You');
   renderTyping();
 });
+
+// Voice recording functionality
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+async function startVoiceRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+    
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      await uploadVoiceMessage(audioBlob);
+      
+      // Stop all tracks to release microphone
+      stream.getTracks().forEach(track => track.stop());
+    };
+    
+    mediaRecorder.start();
+    isRecording = true;
+    
+    // Update UI
+    voiceBtn.textContent = '🔴';
+    voiceBtn.title = 'Stop recording';
+    voiceBtn.classList.add('bg-red-100', 'text-red-700');
+    voiceBtn.classList.remove('bg-slate-100', 'text-slate-700');
+    
+  } catch (error) {
+    addSystem('Microphone access denied or not available');
+    console.error('Voice recording error:', error);
+  }
+}
+
+function stopVoiceRecording() {
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    isRecording = false;
+    
+    // Reset UI
+    voiceBtn.textContent = '🎤';
+    voiceBtn.title = 'Record voice message';
+    voiceBtn.classList.remove('bg-red-100', 'text-red-700');
+    voiceBtn.classList.add('bg-slate-100', 'text-slate-700');
+  }
+}
+
+async function uploadVoiceMessage(audioBlob) {
+  if (!socket) { 
+    addSystem('Please log in first'); 
+    return; 
+  }
+  
+  const formData = new FormData();
+  const audioFile = new File([audioBlob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+  formData.append('files', audioFile);
+  
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!res.ok) { 
+      addSystem('Voice message upload failed'); 
+      return; 
+    }
+    
+    const data = await res.json();
+    const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+    
+    for (const att of attachments) {
+      // Mark as voice message
+      att.isVoiceMessage = true;
+      socket.emit('attachment', att);
+    }
+  } catch (error) {
+    addSystem('Voice message upload error');
+    console.error('Voice upload error:', error);
+  }
+}
+
+// Voice button event listener
+if (voiceBtn) {
+  voiceBtn.addEventListener('click', () => {
+    if (isRecording) {
+      stopVoiceRecording();
+    } else {
+      startVoiceRecording();
+    }
+  });
+}
 
 // Attachments: button and input
 if (attachBtn && fileInput) {
@@ -363,6 +750,17 @@ let typingTimeout;
 function triggerTyping() {
   if (!socket) return;
   socket.emit('typing', true);
+  // Seen should only be emitted when the user starts typing a reply
+  try {
+    const receivedBubbles = messagesEl.querySelectorAll('.bg-gray-200, .dark\\:bg-gray-700');
+    const lastReceivedBubble = receivedBubbles[receivedBubbles.length - 1];
+    const li = lastReceivedBubble ? lastReceivedBubble.closest('li') : null;
+    const msgId = li && li.dataset ? li.dataset.messageId : null;
+    if (msgId && !seenEmitted.has(msgId)) {
+      socket.emit('message-seen', msgId);
+      seenEmitted.add(msgId);
+    }
+  } catch {}
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => socket.emit('typing', false), 1200);
 }
@@ -805,13 +1203,119 @@ function escapeHtml(text) {
   const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
   return String(text || '').replace(/[&<>"']/g, (m) => map[m]);
 }
+// Server tells sender that their message has been delivered to recipient
+socket.on('message-delivered', (data) => {
+  const messageEl = document.querySelector(`[data-message-id="${data.messageId}"]`);
+  if (messageEl) {
+    const bubbleEl = messageEl.querySelector('.bg-blue-500');
+    const statusEl = bubbleEl ? bubbleEl.querySelector('.message-status') : null;
+    if (statusEl) {
+      const current = statusEl.getAttribute('data-status');
+      if (current !== 'seen') {
+        statusEl.outerHTML = renderStatusTicks('delivered', true);
+      }
+    }
+  }
+});
+
+// Server tells sender that recipient has seen their message
 socket.on('message-seen-by', (data) => {
   const messageEl = document.querySelector(`[data-message-id="${data.messageId}"]`);
   if (messageEl) {
-    const statusEl = messageEl.querySelector('.message-status');
+    const bubbleEl = messageEl.querySelector('.bg-blue-500');
+    const statusEl = bubbleEl ? bubbleEl.querySelector('.message-status') : null;
     if (statusEl) {
-      statusEl.textContent = `Seen by ${data.seenBy}`;
-      statusEl.classList.add('text-blue-400');
+      statusEl.outerHTML = renderStatusTicks('seen', true);
     }
+  }
+});
+
+// Voice message playback functionality
+let currentAudio = null;
+let currentPlayButton = null;
+
+// Handle voice message play/pause
+document.addEventListener('click', async (e) => {
+  const playBtn = e.target.closest('.voice-play-btn');
+  if (!playBtn) return;
+  
+  const audioUrl = playBtn.dataset.audioUrl;
+  if (!audioUrl) return;
+  
+  const playIcon = playBtn.querySelector('.play-icon');
+  const pauseIcon = playBtn.querySelector('.pause-icon');
+  const voiceMessage = playBtn.closest('.voice-message');
+  const progressBar = voiceMessage.querySelector('.voice-progress');
+  
+  // If clicking the same button while playing, pause
+  if (currentAudio && currentPlayButton === playBtn && !currentAudio.paused) {
+    currentAudio.pause();
+    playIcon.classList.remove('hidden');
+    pauseIcon.classList.add('hidden');
+    return;
+  }
+  
+  // Stop any currently playing audio
+  if (currentAudio) {
+    currentAudio.pause();
+    if (currentPlayButton) {
+      const prevPlayIcon = currentPlayButton.querySelector('.play-icon');
+      const prevPauseIcon = currentPlayButton.querySelector('.pause-icon');
+      prevPlayIcon.classList.remove('hidden');
+      prevPauseIcon.classList.add('hidden');
+    }
+  }
+  
+  // Create new audio element
+  currentAudio = new Audio(audioUrl);
+  currentPlayButton = playBtn;
+  
+  // Update UI to show playing state
+  playIcon.classList.add('hidden');
+  pauseIcon.classList.remove('hidden');
+  
+  // Handle audio events
+  currentAudio.addEventListener('loadedmetadata', () => {
+    const duration = currentAudio.duration;
+    const durationText = voiceMessage.querySelector('.text-xs');
+    if (durationText && duration) {
+      const minutes = Math.floor(duration / 60);
+      const seconds = Math.floor(duration % 60);
+      durationText.textContent = `🎤 Voice message • ${minutes}:${seconds.toString().padStart(2, '0')}`;
+    }
+  });
+  
+  currentAudio.addEventListener('timeupdate', () => {
+    if (currentAudio.duration) {
+      const progress = (currentAudio.currentTime / currentAudio.duration) * 100;
+      progressBar.style.width = `${progress}%`;
+    }
+  });
+  
+  currentAudio.addEventListener('ended', () => {
+    playIcon.classList.remove('hidden');
+    pauseIcon.classList.add('hidden');
+    progressBar.style.width = '0%';
+    currentAudio = null;
+    currentPlayButton = null;
+  });
+  
+  currentAudio.addEventListener('error', () => {
+    playIcon.classList.remove('hidden');
+    pauseIcon.classList.add('hidden');
+    addSystem('Error playing voice message');
+    currentAudio = null;
+    currentPlayButton = null;
+  });
+  
+  // Start playing
+  try {
+    await currentAudio.play();
+  } catch (error) {
+    playIcon.classList.remove('hidden');
+    pauseIcon.classList.add('hidden');
+    addSystem('Error playing voice message');
+    currentAudio = null;
+    currentPlayButton = null;
   }
 });

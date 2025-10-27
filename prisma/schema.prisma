@@ -54,6 +54,7 @@ model Message {
   text      String
   createdAt DateTime  @default(now())
   deletedAt DateTime? // soft delete
+  editedAt  DateTime? // last edited timestamp
 
   // Optional attachment fields
   attachmentUrl  String?
